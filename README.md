@@ -97,29 +97,3 @@ dist/
 build/
 *.egg-info/
 .DS_Store
-```
-
-**Critical:** Never upload real API keys, tokens, or `.env` files with live credentials (Telegram bot token, payment gateway keys, Anthropic/OpenAI keys). Replace them with placeholders in a `.env.example` file before uploading.
-
----
-
-## 5. Drag-and-Drop Upload — Step by Step
-
-1. **Create the repository** — github.com → `+` (top right) → New repository → name it per the table above → choose Public/Private → do **not** check "Add README" if your project already has one.
-2. **Open the repo** → click **Add file** → **Upload files**.
-3. **Drag the entire project folder** from File Explorer straight into the browser drop zone. Modern GitHub preserves folder structure automatically.
-4. Scroll down, write a commit message (e.g. "Initial upload"), click **Commit changes**.
-5. **For projects with `node_modules`/`venv`:** upload the `.gitignore` file *first* as a separate small commit, then upload the rest — otherwise the upload will try to include those huge folders and may time out or exceed the 100-file/25MB-per-file web-upload limit.
-6. **For anything bigger than that limit** (large video-engine builds, big datasets): install **GitHub Desktop** (free, no command line needed) — you can literally drag your project folder onto the GitHub Desktop window, it detects it as a new repo, and you click "Publish repository." Same drag-and-drop feel, no file-size ceiling.
-7. Once uploaded, go to repo **Settings → General** (or the gear icon near "About" on the repo page) and add **Topics** (e.g. `chrome-extension`, `automation`, `react`, `ai-video`) — this makes your work discoverable and makes the profile look intentional, not just a dump of folders.
-
----
-
-## 6. Final Polish Checklist
-
-- [ ] Every repo has a one-paragraph description (the "About" gear icon on each repo page)
-- [ ] Every repo has 2-4 topic tags
-- [ ] Both profile READMEs are live and linking to each other
-- [ ] 6 repos pinned on each profile (personal + org)
-- [ ] No real API keys/tokens committed anywhere — check with `git log -p | grep -i "key\|token\|secret"` locally if you ever move to CLI, or just eyeball each file before upload
-- [ ] Org has a logo/avatar uploaded (Settings → Organization profile)
