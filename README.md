@@ -101,12 +101,43 @@ build/
 
 ---
 
-## Higgsfield API example: Seedance 2.5 text-to-video
+## Adron Video Engine: Seedance 2.5 video UI (Higgsfield API)
 
-`index.ts` uses the official [`@higgsfield/client`](https://www.npmjs.com/package/@higgsfield/client) SDK (`subscribe` on model `bytedance/seedance-2.5/text-to-video`) to generate a 5-second, 720p, 16:9 video from the prompt "A cinematic scene at sunset", waits for it, and prints the video URL.
+A local web app for making Seedance 2.5 videos through the Higgsfield API with the official [`@higgsfield/client`](https://www.npmjs.com/package/@higgsfield/client) SDK. Your API key stays on the server; the browser never sees it.
+
+**Features**
+
+- Any number of prompts per batch (up to 500), each up to **50,000 words**. Import `.txt`/`.md` scripts and **split long scripts into scenes** (at scene headings, `---` lines, or by paragraph), with an optional style prefix for every scene.
+- **Image references** per prompt: a start frame (plus an optional end frame) for image-to-video, or up to 9 reference images to keep characters, products and style consistent. Add them by file picker, drag and drop, paste, or public URL; files upload to Higgsfield storage through the server.
+- Output settings: duration 4–30 s, 480p or 720p, aspect ratio 21:9 to 9:16, audio on or off.
+- Live generations panel: queued → generating → completed, with an inline player and download. Failed, moderated (`nsfw`) and canceled jobs are shown as such, never as successes. Cancel (while queued), retry, reuse and delete.
+- Drafts autosave in the browser (IndexedDB); job history is kept in `data/jobs.json`.
+
+**Setup**
 
 1. `npm install`
-2. `cp .env.example .env.local`, then set `HF_CREDENTIALS=key-id:key-secret` in `.env.local`. The file is git-ignored, so the key stays on your machine. An `HF_CREDENTIALS` environment variable also works and takes precedence.
-3. `npm start` — **billable**: this starts a real generation.
+2. `cp .env.example .env.local`, then set `HF_CREDENTIALS=key-id:key-secret` in `.env.local` (git-ignored; never commit it).
+3. `npm run dev` (development, hot reload) or `npm run build && npm start` (production build).
+4. Open http://127.0.0.1:3000
 
-The script exits with code 1, without printing a URL, when the request fails, is moderated (`nsfw`), is canceled, or has no final status within 15 minutes. `npm run typecheck` type-checks it.
+Every video is a separate billable request. Nothing is sent until you confirm the batch summary; batches of more than 10 videos need an extra acknowledgment. Jobs are submitted one at a time, a failed submission is never retried automatically, and nothing resumes after a server restart.
+
+**Configuration** (environment or `.env.local`)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HF_CREDENTIALS` | none | Higgsfield key as `key-id:key-secret`. Without it the UI runs but cannot upload or generate. |
+| `PORT`, `HOST` | `3000`, `127.0.0.1` | Where the server listens. There is no login, so keep it local or put your own authentication in front of it. |
+| `ALLOWED_HOSTS` | none | Extra host names to accept (comma-separated) when serving under another name. |
+| `DATA_DIR` | `data/` | Where job history is stored. |
+| `HF_BASE_URL` | `https://api.higgsfield.ai` | API base URL, for proxies or testing. |
+
+**How prompts map to Seedance 2.5** (`server/requests.ts`)
+
+- Prompt only: `bytedance/seedance-2.5/text-to-video` with `prompt`, `duration`, `resolution`, `aspect_ratio`, `generate_audio`
+- Start/end frame: `bytedance/seedance-2.5/image-to-video` with `image_url` and `end_image_url` (framing comes from the image)
+- Reference images: `bytedance/seedance-2.5/reference-to-video` with `image_urls`
+
+These workflow and field names have not been checked against Higgsfield's official model reference, which was unreachable when this was built. If Higgsfield rejects a field, the job shows the API's error message; options and limits live in `shared/options.ts`.
+
+`npm run example` runs the original one-off CLI generation (`index.ts`, also billable), and `npm run typecheck` type-checks everything.

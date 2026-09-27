@@ -1,5 +1,9 @@
-# Dependencies
+# Dependencies and build output
 node_modules/
+dist/
+
+# Local generation history (prompts, video URLs)
+data/
 
 # Local environment files hold secrets (HF_CREDENTIALS) - never commit them
 .env*
