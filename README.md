@@ -97,3 +97,16 @@ dist/
 build/
 *.egg-info/
 .DS_Store
+```
+
+---
+
+## Higgsfield API example: Seedance 2.5 text-to-video
+
+`index.ts` uses the official [`@higgsfield/client`](https://www.npmjs.com/package/@higgsfield/client) SDK (`subscribe` on model `bytedance/seedance-2.5/text-to-video`) to generate a 5-second, 720p, 16:9 video from the prompt "A cinematic scene at sunset", waits for it, and prints the video URL.
+
+1. `npm install`
+2. `cp .env.example .env.local`, then set `HF_CREDENTIALS=key-id:key-secret` in `.env.local`. The file is git-ignored, so the key stays on your machine. An `HF_CREDENTIALS` environment variable also works and takes precedence.
+3. `npm start` — **billable**: this starts a real generation.
+
+The script exits with code 1, without printing a URL, when the request fails, is moderated (`nsfw`), is canceled, or has no final status within 15 minutes. `npm run typecheck` type-checks it.

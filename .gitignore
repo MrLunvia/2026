@@ -1,0 +1,10 @@
+# Dependencies
+node_modules/
+
+# Local environment files hold secrets (HF_CREDENTIALS) - never commit them
+.env*
+!.env.example
+
+# Logs and OS files
+*.log
+.DS_Store
