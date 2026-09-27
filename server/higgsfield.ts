@@ -73,7 +73,7 @@ export function createHiggsfieldApi(options: { credentials: string; baseUrl: str
           status: String(data?.status),
           // Only web URLs reach the page's player and links.
           videoUrl: typeof videoUrl === 'string' && isAcceptableUrl(videoUrl) ? videoUrl : undefined,
-          reason: reasonFrom(data?.error),
+          reason: reasonFrom(data?.error) ?? reasonFrom(data) ?? otherFields(data),
         };
       } catch (error) {
         throw toHiggsfieldError(error);
@@ -130,7 +130,7 @@ function serviceUrl(value: unknown, what: string): string {
 
 /** Signed input/output URLs can appear in error text; keep the reason, not the access link. */
 function clean(text: string): string {
-  const flat = text.replace(/https?:\/\/\S+/gi, '[url]').replace(/\s+/g, ' ').trim();
+  const flat = text.replace(/https?:\/\/[^\s"'<>)\]}]+/gi, '[url]').replace(/\s+/g, ' ').trim();
   return flat.length > 400 ? `${flat.slice(0, 400)}…` : flat;
 }
 
@@ -153,6 +153,14 @@ function reasonFrom(data: unknown): string | undefined {
   if (typeof message === 'string' && message.trim()) return clean(message);
   if (error !== undefined) return reasonFrom(error);
   return undefined;
+}
+
+/** Whatever else a status response carries, for failures whose reason isn't in a known field. */
+function otherFields(data: unknown): string | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const { status: _s, request_id: _r, status_url: _su, cancel_url: _cu, video: _v, images: _i, ...rest } = data as Record<string, unknown>;
+  const present = Object.entries(rest).filter(([, value]) => value !== null && value !== undefined && value !== '');
+  return present.length > 0 ? clean(JSON.stringify(Object.fromEntries(present))) : undefined;
 }
 
 function withReason(prefix: string, reason: string | undefined): string {

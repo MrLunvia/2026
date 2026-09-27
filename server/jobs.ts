@@ -22,6 +22,14 @@ function summarize({ prompt: _prompt, ...summary }: Job): JobSummary {
   return summary;
 }
 
+/** Settings sent to Higgsfield, for the terminal log: no prompt text, no image links. */
+function describeInput(input: Record<string, unknown>): string {
+  return Object.entries(input)
+    .filter(([key]) => key !== 'prompt')
+    .map(([key, value]) => `${key}=${Array.isArray(value) ? `${value.length} image(s)` : typeof value === 'string' && /^https?:/i.test(value) ? 'set' : String(value)}`)
+    .join(' ');
+}
+
 function preview(prompt: string): string {
   const flat = prompt.replace(/\s+/g, ' ').trim();
   return flat.length > PREVIEW_CHARS ? `${flat.slice(0, PREVIEW_CHARS)}…` : flat;
@@ -253,7 +261,7 @@ export class JobRunner {
           const accepted = await this.api.submit(endpoint, input);
           const status: JobStatus = accepted.status === 'in_progress' ? 'in_progress' : 'queued';
           this.store.update(job.id, { status, requestId: accepted.requestId, submittedAt: nowIso() });
-          console.log(`Submitted job ${job.id} -> request ${accepted.requestId} (${endpoint})`);
+          console.log(`Submitted job ${job.id} -> request ${accepted.requestId} (${endpoint}; ${describeInput(input)})`);
         } catch (error) {
           const problem = error instanceof HiggsfieldError ? error : new HiggsfieldError(String(error));
           // No HTTP status means the request may or may not have reached Higgsfield.
@@ -296,7 +304,7 @@ export class JobRunner {
       this.apply(job, await this.api.status(job.requestId));
     } catch (error) {
       if (error instanceof HiggsfieldError && error.httpStatus === 404) {
-        this.store.update(job.id, { status: 'error', error: 'Higgsfield no longer knows this request (HTTP 404)', finishedAt: nowIso() });
+        this.end(job, 'error', 'Higgsfield no longer knows this request (HTTP 404)');
         return;
       }
       // Anything else (network trouble, 5xx, 429): keep the job active and try again next tick.
@@ -304,36 +312,41 @@ export class JobRunner {
     const started = Date.parse(job.submittedAt ?? job.createdAt);
     if ((job.status === 'queued' || job.status === 'in_progress') && Date.now() - started > this.options.maxWaitMs) {
       const minutes = Math.round(this.options.maxWaitMs / 60_000);
-      this.store.update(job.id, {
-        status: 'error',
-        error: `No final status after ${minutes} minutes. It may still finish; check your Higgsfield console.`,
-        finishedAt: nowIso(),
-      });
+      this.end(job, 'error', `No final status after ${minutes} minutes. It may still finish; check your Higgsfield console.`);
     }
   }
 
   private apply(job: Job, remote: RemoteStatus): void {
-    const finishedAt = nowIso();
     switch (remote.status) {
       case 'queued':
       case 'in_progress':
         if (job.status !== remote.status) this.store.update(job.id, { status: remote.status });
         return;
       case 'completed':
-        if (remote.videoUrl) this.store.update(job.id, { status: 'completed', videoUrl: remote.videoUrl, error: undefined, finishedAt });
-        else this.store.update(job.id, { status: 'error', error: 'Higgsfield reported completion but returned no video URL', finishedAt });
+        if (remote.videoUrl) {
+          this.store.update(job.id, { status: 'completed', videoUrl: remote.videoUrl, error: undefined, finishedAt: nowIso() });
+          console.log(`Job ${job.id} completed (request ${job.requestId})`);
+        } else {
+          this.end(job, 'error', 'Higgsfield reported completion but returned no video URL');
+        }
         return;
       case 'failed':
-        this.store.update(job.id, { status: 'failed', error: remote.reason ?? 'Generation failed', finishedAt });
+        this.end(job, 'failed', remote.reason ?? 'Generation failed; Higgsfield gave no reason');
         return;
       case 'nsfw':
-        this.store.update(job.id, { status: 'nsfw', error: remote.reason ?? 'Rejected by content moderation', finishedAt });
+        this.end(job, 'nsfw', remote.reason ?? 'Rejected by content moderation');
         return;
       case 'canceled':
-        this.store.update(job.id, { status: 'canceled', error: remote.reason ?? 'Canceled', finishedAt });
+        this.end(job, 'canceled', remote.reason ?? 'Canceled');
         return;
       default:
       // Unknown state: keep polling.
     }
+  }
+
+  /** Record a final non-success state, and say why in the terminal so failures are easy to report. */
+  private end(job: Job, status: 'failed' | 'nsfw' | 'canceled' | 'error', reason: string): void {
+    this.store.update(job.id, { status, error: reason, finishedAt: nowIso() });
+    console.warn(`Job ${job.id} (request ${job.requestId ?? 'none'}) ended ${status}: ${reason}`);
   }
 }
