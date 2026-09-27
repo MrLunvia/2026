@@ -13,9 +13,11 @@ export interface AppDeps {
   api: HiggsfieldApi | undefined;
   /** Host names the server answers to (DNS-rebinding protection for a server that spends credits). */
   allowedHosts: Set<string>;
+  environment: AppConfig['environment'];
 }
 
-const NOT_CONFIGURED = 'HF_CREDENTIALS is not configured on the server. Add it to .env.local and restart.';
+const NOT_CONFIGURED = 'HF_CREDENTIALS is not configured on the server. Add it (in .env.local, or as a Codespaces secret) and restart.';
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 /** Identify the real image type from its first bytes rather than trusting the declared type. */
 export function sniffImageType(bytes: Buffer): string | undefined {
@@ -34,16 +36,19 @@ function hostGuard(allowedHosts: Set<string>) {
       res.status(403).type('text').send('Host not allowed. Set ALLOWED_HOSTS to serve this name.');
       return;
     }
-    // Block cross-site writes: browsers send Origin on POST/DELETE.
+    // Block cross-site writes: browsers send Origin on POST/DELETE. Accept the page's own origin, or a
+    // configured public name (a forwarding proxy such as Codespaces may rewrite Host to localhost).
     const origin = req.headers.origin;
     if (origin && req.method !== 'GET' && req.method !== 'HEAD') {
-      let sameOrigin = false;
+      let trusted = false;
       try {
-        sameOrigin = new URL(origin).host === hostHeader;
+        const url = new URL(origin);
+        const name = url.hostname.toLowerCase();
+        trusted = url.host === hostHeader || (!LOOPBACK.has(name) && allowedHosts.has(name));
       } catch {
-        sameOrigin = false;
+        trusted = false;
       }
-      if (!sameOrigin) {
+      if (!trusted) {
         res.status(403).json({ error: 'Cross-origin request blocked' });
         return;
       }
@@ -52,7 +57,7 @@ function hostGuard(allowedHosts: Set<string>) {
   };
 }
 
-export function createApp({ store, runner, api, allowedHosts }: AppDeps) {
+export function createApp({ store, runner, api, allowedHosts, environment }: AppDeps) {
   const app = express();
   app.disable('x-powered-by');
   app.use(hostGuard(allowedHosts));
@@ -64,7 +69,7 @@ export function createApp({ store, runner, api, allowedHosts }: AppDeps) {
   };
 
   router.get('/config', (_req, res) => {
-    const config: AppConfig = { credentialsConfigured: api !== undefined };
+    const config: AppConfig = { credentialsConfigured: api !== undefined, environment };
     res.json(config);
   });
 

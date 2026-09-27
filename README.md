@@ -113,7 +113,15 @@ A local web app for making Seedance 2.5 videos through the Higgsfield API with t
 - Live generations panel: queued → generating → completed, with an inline player and download. Failed, moderated (`nsfw`) and canceled jobs are shown as such, never as successes. Cancel (while queued), retry, reuse and delete.
 - Drafts autosave in the browser (IndexedDB); job history is kept in `data/jobs.json`.
 
-**Setup**
+**Run it on GitHub (nothing to install)**
+
+1. Add your key once: on GitHub open **Settings → Codespaces → Secrets → New secret**, name it `HF_CREDENTIALS`, set the value to `key-id:key-secret`, and give it access to this repository.
+2. [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/MrLunvia/2026?quickstart=1), or use **Code → Codespaces → Create codespace** on the branch that has this app.
+3. Wait for setup to finish (a few minutes the first time). The app installs, builds, starts, and opens in a new browser tab. If no tab opens, open port 3000 from the **Ports** panel.
+
+The app's address is private to your GitHub account. If you add or change the secret while a codespace is running, stop and restart the codespace. Stop it when you're done (GitHub → **Your codespaces**) so it doesn't use up your Codespaces hours.
+
+**Run it on your computer**
 
 1. `npm install`
 2. `cp .env.example .env.local`, then set `HF_CREDENTIALS=key-id:key-secret` in `.env.local` (git-ignored; never commit it).

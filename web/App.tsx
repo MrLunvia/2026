@@ -325,10 +325,18 @@ export function App() {
               <Icon name="key" size={16} />
               <div>
                 <strong>Generation is off: no Higgsfield API key on the server.</strong>
-                <p>
-                  Put <code>HF_CREDENTIALS=key-id:key-secret</code> in <code>.env.local</code> and restart the server. The key stays on the
-                  server; this page never sees it. You can still write and organize prompts.
-                </p>
+                {config.environment === 'codespaces' ? (
+                  <p>
+                    On GitHub, open Settings → Codespaces → Secrets and add <code>HF_CREDENTIALS</code> with the value{' '}
+                    <code>key-id:key-secret</code> for this repository, then stop and restart this codespace. The key stays on the
+                    server; this page never sees it. You can still write and organize prompts.
+                  </p>
+                ) : (
+                  <p>
+                    Put <code>HF_CREDENTIALS=key-id:key-secret</code> in <code>.env.local</code> and restart the server. The key stays on
+                    the server; this page never sees it. You can still write and organize prompts.
+                  </p>
+                )}
               </div>
             </div>
           )}

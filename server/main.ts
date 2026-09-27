@@ -22,10 +22,19 @@ const port = Number(process.env.PORT) || 3000;
 const host = process.env.HOST?.trim() || '127.0.0.1';
 const baseUrl = (process.env.HF_BASE_URL?.trim() || 'https://api.higgsfield.ai').replace(/\/+$/, '');
 
+// GitHub Codespaces forwards the port at https://<codespace>-<port>.<domain> (private to the owner by default).
+const codespace = process.env.CODESPACE_NAME?.trim();
+const forwardingDomain = process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN?.trim();
+const codespacesUrl = codespace && forwardingDomain ? `https://${codespace}-${port}.${forwardingDomain}` : undefined;
+
 const credentials = process.env.HF_CREDENTIALS?.trim();
 const credentialsValid = !!credentials && /^[^:\s]+:[^:\s]+$/.test(credentials);
 if (!credentials) {
-  console.warn('HF_CREDENTIALS is not set: the UI runs, but generation and uploads are disabled. Add it to .env.local and restart.');
+  console.warn(
+    codespacesUrl
+      ? 'HF_CREDENTIALS is not set: add it as a Codespaces secret (GitHub > Settings > Codespaces), then restart the codespace.'
+      : 'HF_CREDENTIALS is not set: the UI runs, but generation and uploads are disabled. Add it to .env.local and restart.',
+  );
 } else if (!credentialsValid) {
   console.warn('HF_CREDENTIALS is not in "key-id:key-secret" format: generation and uploads are disabled.');
 }
@@ -42,8 +51,9 @@ for (const name of (process.env.ALLOWED_HOSTS ?? '').split(',')) {
   if (name.trim()) allowedHosts.add(name.trim().toLowerCase());
 }
 if (host !== '0.0.0.0' && host !== '::') allowedHosts.add(host.toLowerCase());
+if (codespacesUrl) allowedHosts.add(new URL(codespacesUrl).hostname);
 
-const app = createApp({ store, runner, api, allowedHosts });
+const app = createApp({ store, runner, api, allowedHosts, environment: codespacesUrl ? 'codespaces' : 'local' });
 const server = http.createServer(app);
 
 if (production) {
@@ -66,7 +76,7 @@ if (production) {
 
 server.listen(port, host, () => {
   const shown = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
-  console.log(`Adron Video Engine running at http://${shown}:${port} (${production ? 'production' : 'development'})`);
+  console.log(`Adron Video Engine running at ${codespacesUrl ?? `http://${shown}:${port}`} (${production ? 'production' : 'development'})`);
 });
 
 async function shutdown() {

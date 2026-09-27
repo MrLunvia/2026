@@ -69,4 +69,6 @@ export interface Job extends JobSummary {
 
 export interface AppConfig {
   credentialsConfigured: boolean;
+  /** Where the server runs, so the UI can explain how to add the key. */
+  environment: 'local' | 'codespaces';
 }

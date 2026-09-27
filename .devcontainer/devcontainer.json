@@ -1,0 +1,21 @@
+{
+  // GitHub Codespaces: installs, builds and starts the app, then opens it in the browser.
+  "name": "Adron Video Engine",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "postCreateCommand": "npm ci && npm run build",
+  "postAttachCommand": "npm start",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "Adron Video Engine",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  // Offered on the "create codespace" page; stored as your Codespaces secret, never in the repo.
+  "secrets": {
+    "HF_CREDENTIALS": {
+      "description": "Your Higgsfield API key in key-id:key-secret format, from the Higgsfield console.",
+      "documentationUrl": "https://console.higgsfield.ai"
+    }
+  }
+}
