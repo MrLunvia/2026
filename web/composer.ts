@@ -43,7 +43,6 @@ export const DEFAULT_SETTINGS: GenerationSettings = {
   generateAudio: true,
 };
 
-const DRAFT_KEY = 'adron-video-engine/draft/v1';
 
 export const newPrompt = (patch: Partial<DraftPrompt> = {}): DraftPrompt => ({
   id: uid(),
@@ -177,7 +176,8 @@ function placeImages(p: DraftPrompt, slot: ImageSlot, images: DraftImage[]): Dra
 
 // ---- hook --------------------------------------------------------------------------------
 
-export function useComposer(notify: Notify) {
+/** `draftKey` keeps each account's draft separate on a shared browser. */
+export function useComposer(notify: Notify, draftKey: string) {
   const [draft, setDraft] = useState<Draft>();
   const [saveFailed, setSaveFailed] = useState(false);
   const draftRef = useRef<Draft | undefined>(undefined);
@@ -188,7 +188,7 @@ export function useComposer(notify: Notify) {
 
   useEffect(() => {
     let cancelled = false;
-    idbGet(DRAFT_KEY)
+    idbGet(draftKey)
       .then(restore, () => undefined)
       .then((restored) => {
         if (!cancelled) setDraft(restored ?? { settings: DEFAULT_SETTINGS, prompts: [newPrompt()] });
@@ -196,18 +196,18 @@ export function useComposer(notify: Notify) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [draftKey]);
 
   useEffect(() => {
     if (!draft) return;
     const timer = setTimeout(() => {
-      idbSet(DRAFT_KEY, forStorage(draft)).then(
+      idbSet(draftKey, forStorage(draft)).then(
         () => setSaveFailed(false),
         () => setSaveFailed(true),
       );
     }, 600);
     return () => clearTimeout(timer);
-  }, [draft]);
+  }, [draft, draftKey]);
 
   const update = useCallback((fn: (d: Draft) => Draft) => setDraft((d) => (d ? fn(d) : d)), []);
   const updatePrompt = useCallback(

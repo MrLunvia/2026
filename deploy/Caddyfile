@@ -1,0 +1,6 @@
+# HTTPS for the platform. SITE_ADDRESS comes from PUBLIC_URL in .env (e.g. https://video.adronstore.in).
+{$SITE_ADDRESS} {
+	encode zstd gzip
+	reverse_proxy app:3000
+	header -Server
+}

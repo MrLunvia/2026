@@ -16,6 +16,9 @@
     "HF_CREDENTIALS": {
       "description": "Your Higgsfield API key in key-id:key-secret format, from the Higgsfield console.",
       "documentationUrl": "https://console.higgsfield.ai"
+    },
+    "ADMIN_EMAILS": {
+      "description": "Email address(es) that get the Admin dashboard, comma-separated. Sign up on the site with one of them."
     }
   }
 }

@@ -41,7 +41,9 @@ export interface JobActions {
   copy: (text: string, what: string) => Promise<void>;
 }
 
-const JobCard = memo(function JobCard({ job, now, actions }: { job: JobSummary; now: number; actions: JobActions }) {
+type Money = (cents: number) => string;
+
+const JobCard = memo(function JobCard({ job, now, actions, money }: { job: JobSummary; now: number; actions: JobActions; money?: Money }) {
   const [busy, setBusy] = useState<string>();
   const [fullPrompt, setFullPrompt] = useState<string>();
   const [expanded, setExpanded] = useState(false);
@@ -89,6 +91,12 @@ const JobCard = memo(function JobCard({ job, now, actions }: { job: JobSummary; 
           <Icon name={mode.icon} size={14} />
           {mode.label}
         </span>
+        {job.refunded && (
+          <span className="badge badge-neutral" title={money ? `${money(job.priceCents)} returned to your balance` : undefined}>
+            <Icon name="wallet" size={12} />
+            Refunded
+          </span>
+        )}
         {job.batchSize > 1 && (
           <span className="job-batch">
             #{job.batchIndex + 1} of {job.batchSize}
@@ -129,6 +137,7 @@ const JobCard = memo(function JobCard({ job, now, actions }: { job: JobSummary; 
         <span>{job.media.mode === 'frames' ? 'image framing' : job.settings.aspectRatio}</span>
         <span>{job.settings.generateAudio ? 'audio' : 'no audio'}</span>
         {!active && job.finishedAt && <span>took {formatElapsed(elapsed)}</span>}
+        {money && job.priceCents > 0 && <span className={job.refunded ? 'is-struck' : undefined}>{money(job.priceCents)}</span>}
       </div>
 
       {images.length > 0 && (
@@ -216,12 +225,15 @@ export function JobsPanel({
   error,
   now,
   actions,
+  money,
 }: {
   jobs: JobSummary[];
   loaded: boolean;
   error?: string;
   now: number;
   actions: JobActions;
+  /** Shows what each video cost when set. */
+  money?: Money;
 }) {
   const [filter, setFilter] = useState<Filter>('all');
   const counts = useMemo(() => Object.fromEntries(FILTERS.map((f) => [f.id, jobs.filter(f.test).length])) as Record<Filter, number>, [jobs]);
@@ -230,8 +242,8 @@ export function JobsPanel({
   return (
     <section className="jobs" aria-labelledby="jobs-title">
       <header className="jobs-header">
-        <h2 id="jobs-title">Generations</h2>
-        <div className="filters" role="group" aria-label="Filter generations">
+        <h2 id="jobs-title">My videos</h2>
+        <div className="filters" role="group" aria-label="Filter videos">
           {FILTERS.map((f) => (
             <button key={f.id} type="button" aria-pressed={filter === f.id} className={filter === f.id ? 'filter is-active' : 'filter'} onClick={() => setFilter(f.id)}>
               {f.label}
@@ -263,7 +275,7 @@ export function JobsPanel({
       ) : (
         <ul className="job-list">
           {visible.map((job) => (
-            <JobCard key={job.id} job={job} now={now} actions={actions} />
+            <JobCard key={job.id} job={job} now={now} actions={actions} money={money} />
           ))}
         </ul>
       )}

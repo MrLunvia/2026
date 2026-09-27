@@ -1,0 +1,39 @@
+# Runs the platform behind Caddy, which gets and renews the HTTPS certificate automatically.
+# Setup: copy .env.example to .env, fill it in, point your domain's DNS at this server, then `docker compose up -d`.
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DATA_DIR: /data
+      # Caddy sits in front, so trust one proxy hop for the visitor's real IP (used by rate limits).
+      TRUST_PROXY: "1"
+    volumes:
+      - app-data:/data
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      # Only the public address goes to Caddy; the app's secrets stay in the app container.
+      SITE_ADDRESS: ${PUBLIC_URL:?Set PUBLIC_URL in .env, e.g. https://video.adronstore.in}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  app-data:
+  caddy-data:
+  caddy-config:

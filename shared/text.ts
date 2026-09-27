@@ -10,6 +10,15 @@ function isSpace(code: number): boolean {
 }
 
 /** Words as editors count them: runs of non-whitespace. Allocation-free for very long prompts. */
+/** One line of at most `max` characters, cut at a word boundary with an ellipsis. */
+export function shorten(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  if (flat.length <= max) return flat;
+  const cut = flat.slice(0, max - 1);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,.;:!?-]+$/, '')}…`;
+}
+
 export function countWords(text: string): number {
   let count = 0;
   let inWord = false;

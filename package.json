@@ -9,21 +9,26 @@
     "build": "vite build",
     "start": "tsx server/main.ts --production",
     "example": "tsx index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "backup": "tsx server/backup.ts"
   },
   "dependencies": {
     "@higgsfield/client": "^0.2.6",
     "axios": "^1.20.0",
+    "better-sqlite3": "^13.0.3",
     "dotenv": "^18.0.4",
     "express": "^5.2.1",
     "idb-keyval": "^6.3.0",
+    "nodemailer": "^10.0.11",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "tsx": "^4.23.15"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/express": "^5.0.6",
     "@types/node": "^22.20.4",
+    "@types/nodemailer": "^8.0.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",

@@ -18,7 +18,7 @@ export const ENDPOINTS = {
 export type MediaMode = keyof typeof ENDPOINTS;
 export const MEDIA_MODES = Object.keys(ENDPOINTS) as MediaMode[];
 
-export const DURATION = { min: 4, max: 30, default: 5 } as const;
+export const DURATION = { min: 4, max: 30, default: 30 } as const;
 
 // Through the API, Seedance 2.5 renders 480p or 720p.
 export const RESOLUTIONS = ['480p', '720p'] as const;

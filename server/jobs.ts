@@ -1,33 +1,78 @@
 /**
- * Generation jobs: a persisted history (data/jobs.json) plus a runner that submits pending jobs
- * one at a time and polls Higgsfield until each reaches a final state.
+ * Generation jobs for every customer, stored in SQLite. Customers pay when jobs are created; the
+ * runner submits pending jobs a few at a time and polls Higgsfield until each finishes. A job that
+ * ends without a video (failed, moderated, canceled, never sent) is refunded exactly once.
  *
- * Billing safety: a submission is never retried automatically, and nothing is resumed after a
- * restart - unsent jobs stop, and a job interrupted mid-submit is flagged for manual checking.
+ * If Higgsfield rejects the platform's key or its credit runs out (401/403) or rate-limits (429),
+ * submissions pause and jobs wait in line instead of failing, so topping up resumes the queue.
  */
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import path from 'node:path';
-import { countWords } from '../shared/text.ts';
-import { ACTIVE_STATUSES, type CreateJobsRequest, type Job, type JobStatus, type JobSummary } from '../shared/types.ts';
+import { videoPriceCents } from '../shared/pricing.ts';
+import { countWords, shorten } from '../shared/text.ts';
+import type { AdminJobRow, CreateJobsRequest, Job, JobStatus, JobSummary, ServiceStatus } from '../shared/types.ts';
+import type { Billing } from './billing.ts';
+import { nowIso, type DB } from './db.ts';
 import { HiggsfieldError, type HiggsfieldApi, type RemoteStatus } from './higgsfield.ts';
 import { HttpProblem, toHiggsfieldRequest } from './requests.ts';
 
 const PREVIEW_CHARS = 280;
-const LIST_LIMIT = 500;
+const ACTIVE = ['pending', 'submitting', 'queued', 'in_progress'];
 
-const nowIso = () => new Date().toISOString();
+export interface JobRow {
+  id: string;
+  user_id: string;
+  batch_id: string;
+  batch_index: number;
+  batch_size: number;
+  title: string | null;
+  prompt: string;
+  prompt_preview: string;
+  word_count: number;
+  settings: string;
+  media: string;
+  endpoint: string;
+  status: JobStatus;
+  request_id: string | null;
+  video_url: string | null;
+  error: string | null;
+  detail: string | null;
+  price_cents: number;
+  refunded_at: string | null;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+  submitted_at: string | null;
+  finished_at: string | null;
+}
+
+function toJob(row: JobRow): Job {
+  return {
+    id: row.id,
+    batchId: row.batch_id,
+    batchIndex: row.batch_index,
+    batchSize: row.batch_size,
+    title: row.title ?? undefined,
+    prompt: row.prompt,
+    promptPreview: row.prompt_preview,
+    wordCount: row.word_count,
+    settings: JSON.parse(row.settings),
+    media: JSON.parse(row.media),
+    endpoint: row.endpoint,
+    status: row.status,
+    requestId: row.request_id ?? undefined,
+    videoUrl: row.video_url ?? undefined,
+    error: row.error ?? undefined,
+    priceCents: row.price_cents,
+    refunded: row.refunded_at !== null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    submittedAt: row.submitted_at ?? undefined,
+    finishedAt: row.finished_at ?? undefined,
+  };
+}
 
 function summarize({ prompt: _prompt, ...summary }: Job): JobSummary {
   return summary;
-}
-
-/** Settings sent to Higgsfield, for the terminal log: no prompt text, no image links. */
-function describeInput(input: Record<string, unknown>): string {
-  return Object.entries(input)
-    .filter(([key]) => key !== 'prompt')
-    .map(([key, value]) => `${key}=${Array.isArray(value) ? `${value.length} image(s)` : typeof value === 'string' && /^https?:/i.test(value) ? 'set' : String(value)}`)
-    .join(' ');
 }
 
 function preview(prompt: string): string {
@@ -35,159 +80,184 @@ function preview(prompt: string): string {
   return flat.length > PREVIEW_CHARS ? `${flat.slice(0, PREVIEW_CHARS)}…` : flat;
 }
 
+/** Provider reasons about the platform's own account (credit, keys, limits) are for the admin, not the customer. */
+function customerReason(reason: string | undefined): string | undefined {
+  if (!reason || /credit|balance|billing|quota|subscription|api[ _-]?key|unauthori[sz]ed|forbidden|rate.?limit|higgsfield/i.test(reason)) return undefined;
+  return shorten(reason, 300);
+}
+
+/** What a ledger line calls a video: its title, or the start of its prompt. */
+const videoName = (row: { title: string | null; prompt_preview: string }) => shorten(row.title ?? row.prompt_preview, 80);
+
+const REFUND_NOTE: Record<'failed' | 'nsfw' | 'canceled' | 'error', string> = {
+  failed: 'Video failed',
+  nsfw: 'Blocked by the content filter',
+  canceled: 'Canceled',
+  error: 'Video could not be made',
+};
+
+/** Settings sent to Higgsfield, for the log: no prompt text, no image links. */
+function describeInput(input: Record<string, unknown>): string {
+  return Object.entries(input)
+    .filter(([key]) => key !== 'prompt')
+    .map(([key, value]) => `${key}=${Array.isArray(value) ? `${value.length} image(s)` : typeof value === 'string' && /^https?:/i.test(value) ? 'set' : String(value)}`)
+    .join(' ');
+}
+
+type Patch = { status?: JobStatus; requestId?: string; videoUrl?: string; error?: string; detail?: string; submittedAt?: string; finishedAt?: string };
+const COLUMNS: Record<keyof Patch, string> = {
+  status: 'status',
+  requestId: 'request_id',
+  videoUrl: 'video_url',
+  error: 'error',
+  detail: 'detail',
+  submittedAt: 'submitted_at',
+  finishedAt: 'finished_at',
+};
+
 export class JobStore {
-  private readonly jobs = new Map<string, Job>();
-  private version = 1;
-  private saveTimer: NodeJS.Timeout | undefined;
-  private saving: Promise<void> = Promise.resolve();
+  private readonly boot = randomUUID().slice(0, 8);
+  private readonly versions = new Map<string, number>();
 
-  constructor(private readonly file: string) {}
+  constructor(private readonly db: DB) {}
 
-  /** Changes whenever any job changes; lets the UI poll cheaply with If-None-Match. */
-  get etag(): string {
-    return `"jobs-${this.version}"`;
+  /** Changes whenever one of this customer's jobs changes; lets the page poll cheaply. */
+  etag(userId: string): string {
+    return `"${this.boot}-${this.versions.get(userId) ?? 0}"`;
   }
 
-  async load(): Promise<void> {
-    let raw: string;
-    try {
-      raw = await readFile(this.file, 'utf8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-      throw error;
+  changed(userId: string): void {
+    this.versions.set(userId, (this.versions.get(userId) ?? 0) + 1);
+  }
+
+  row(id: string): JobRow | undefined {
+    return this.db.prepare<[string], JobRow>('SELECT * FROM jobs WHERE id = ?').get(id);
+  }
+
+  /** A customer's own, not-deleted job. */
+  owned(id: string, userId: string): JobRow {
+    const row = this.row(id);
+    if (!row || row.user_id !== userId || row.deleted_at) throw new HttpProblem(404, 'No such video');
+    return row;
+  }
+
+  full(row: JobRow): Job {
+    return toJob(row);
+  }
+
+  list(userId: string, limit = 300): JobSummary[] {
+    return this.db
+      .prepare<[string, number], JobRow>('SELECT * FROM jobs WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC, batch_index ASC LIMIT ?')
+      .all(userId, limit)
+      .map((row) => summarize(toJob(row)));
+  }
+
+  listAll(limit = 200): AdminJobRow[] {
+    return this.db
+      .prepare<[number], JobRow & { email: string }>(
+        'SELECT j.*, u.email FROM jobs j JOIN users u ON u.id = j.user_id ORDER BY j.created_at DESC, j.batch_index ASC LIMIT ?',
+      )
+      .all(limit)
+      .map((row) => ({ ...summarize(toJob(row)), userId: row.user_id, userEmail: row.email, detail: row.detail ?? undefined }));
+  }
+
+  insert(userId: string, jobs: Job[]): void {
+    const insert = this.db.prepare(
+      `INSERT INTO jobs (id, user_id, batch_id, batch_index, batch_size, title, prompt, prompt_preview, word_count, settings, media,
+         endpoint, status, price_cents, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const job of jobs) {
+      insert.run(job.id, userId, job.batchId, job.batchIndex, job.batchSize, job.title ?? null, job.prompt, job.promptPreview, job.wordCount,
+        JSON.stringify(job.settings), JSON.stringify(job.media), job.endpoint, job.status, job.priceCents, job.createdAt, job.updatedAt);
     }
-    let saved: { jobs?: Job[] };
-    try {
-      saved = JSON.parse(raw);
-    } catch {
-      const backup = `${this.file}.corrupt-${Date.now()}`;
-      await rename(this.file, backup);
-      console.warn(`Job history was unreadable; moved it to ${backup} and started fresh.`);
-      return;
-    }
-    const now = nowIso();
-    let changed = false;
-    for (const job of saved.jobs ?? []) {
-      if (job.status === 'pending') {
-        Object.assign(job, { status: 'error', error: 'Not submitted: the server restarted first. Use Retry to submit it.', updatedAt: now, finishedAt: now });
-        changed = true;
-      } else if (job.status === 'submitting') {
-        Object.assign(job, {
-          status: 'error',
-          error: 'The server stopped while submitting this job; check your Higgsfield console before retrying.',
-          updatedAt: now,
-          finishedAt: now,
-        });
-        changed = true;
-      }
-      this.jobs.set(job.id, job);
-    }
-    if (changed) this.changed();
+    this.changed(userId);
   }
 
-  all(): Job[] {
-    return [...this.jobs.values()];
+  update(row: JobRow, patch: Patch): void {
+    const keys = Object.keys(patch) as (keyof Patch)[];
+    const sets = keys.map((key) => `${COLUMNS[key]} = @${key}`);
+    this.db
+      .prepare(`UPDATE jobs SET ${[...sets, 'updated_at = @updatedAt'].join(', ')} WHERE id = @id`)
+      .run({ ...Object.fromEntries(keys.map((key) => [key, patch[key] ?? null])), updatedAt: nowIso(), id: row.id });
+    Object.assign(row, Object.fromEntries(keys.map((key) => [COLUMNS[key], patch[key] ?? null])));
+    this.changed(row.user_id);
   }
 
-  list(): JobSummary[] {
-    return this.all()
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.batchIndex - b.batchIndex)
-      .slice(0, LIST_LIMIT)
-      .map(summarize);
+  softDelete(row: JobRow): void {
+    this.db.prepare('UPDATE jobs SET deleted_at = ? WHERE id = ?').run(nowIso(), row.id);
+    this.changed(row.user_id);
   }
 
-  get(id: string): Job | undefined {
-    return this.jobs.get(id);
+  countActive(userId: string): number {
+    return this.db
+      .prepare<[string], { n: number }>("SELECT COUNT(*) AS n FROM jobs WHERE user_id = ? AND status IN ('pending', 'submitting', 'queued', 'in_progress')")
+      .get(userId)!.n;
   }
 
-  require(id: string): Job {
-    const job = this.jobs.get(id);
-    if (!job) throw new HttpProblem(404, 'No such job');
-    return job;
-  }
-
-  add(jobs: Job[]): void {
-    for (const job of jobs) this.jobs.set(job.id, job);
-    this.changed();
-  }
-
-  update(id: string, patch: Partial<Job>): Job | undefined {
-    const job = this.jobs.get(id);
-    if (!job) return undefined;
-    Object.assign(job, patch, { updatedAt: nowIso() });
-    this.changed();
-    return job;
-  }
-
-  remove(id: string): void {
-    if (this.jobs.delete(id)) this.changed();
-  }
-
-  nextPending(): Job | undefined {
-    return this.all()
-      .filter((job) => job.status === 'pending')
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.batchIndex - b.batchIndex)[0];
-  }
-
-  async flush(): Promise<void> {
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = undefined;
-      await this.save();
-    } else {
-      await this.saving;
-    }
-  }
-
-  private changed(): void {
-    this.version++;
-    clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => {
-      this.saveTimer = undefined;
-      void this.save();
-    }, 300);
-  }
-
-  private save(): Promise<void> {
-    const data = JSON.stringify({ jobs: this.all() });
-    this.saving = this.saving
-      .then(async () => {
-        await mkdir(path.dirname(this.file), { recursive: true });
-        const temp = `${this.file}.tmp`;
-        await writeFile(temp, data);
-        await rename(temp, this.file);
-      })
-      .catch((error: Error) => console.error(`Could not save job history: ${error.message}`));
-    return this.saving;
+  withStatus(...statuses: JobStatus[]): JobRow[] {
+    return this.db
+      .prepare<JobStatus[], JobRow>(`SELECT * FROM jobs WHERE status IN (${statuses.map(() => '?').join(',')}) ORDER BY created_at, batch_index`)
+      .all(...statuses);
   }
 }
 
 export interface RunnerOptions {
   pollIntervalMs: number;
-  /** Stop waiting (and flag the job) when a request has no final state after this long. */
+  /** Refund and stop waiting when a submitted job has no final state after this long. */
   maxWaitMs: number;
+  /** Refund jobs that could not even be submitted within this long (e.g. a long pause). */
+  maxPendingMs: number;
+  submitConcurrency: number;
+  pollConcurrency: number;
+  maxActivePerUser: number;
 }
 
 export class JobRunner {
-  private submitting = false;
+  private inFlight = 0;
   private polling = false;
   private timer: NodeJS.Timeout | undefined;
+  private pause: { until: number; reason: string } | undefined;
 
   constructor(
+    private readonly db: DB,
     private readonly store: JobStore,
+    private readonly billing: Billing,
     private readonly api: HiggsfieldApi | undefined,
     private readonly options: RunnerOptions,
   ) {}
 
   start(): void {
-    this.timer = setInterval(() => void this.pollActive(), this.options.pollIntervalMs);
+    // A submit cut off by a restart may or may not have reached Higgsfield: refund it, never resend it.
+    for (const row of this.store.withStatus('submitting')) {
+      this.end(row, 'error', 'The server restarted while sending this video.', 'Interrupted during submission; outcome unknown');
+    }
+    this.timer = setInterval(() => {
+      void this.pollActive();
+      void this.drain();
+    }, this.options.pollIntervalMs);
+    void this.drain();
   }
 
   stop(): void {
     clearInterval(this.timer);
   }
 
-  enqueue(request: CreateJobsRequest): Job[] {
+  serviceStatus(): ServiceStatus {
+    if (!this.api) return { paused: true, reason: 'HF_CREDENTIALS is not configured' };
+    if (this.pause && this.pause.until > Date.now()) {
+      return { paused: true, reason: this.pause.reason, until: new Date(this.pause.until).toISOString() };
+    }
+    return { paused: false };
+  }
+
+  /** Charge the customer and queue the videos, all or nothing. */
+  enqueue(userId: string, request: CreateJobsRequest, expectedPriceCents?: number): Job[] {
+    if (!this.api) throw new HttpProblem(503, 'Video generation is not available right now.');
+    const price = videoPriceCents(request.settings, this.billing.pricing());
+    if (expectedPriceCents !== undefined && expectedPriceCents !== price) {
+      throw new HttpProblem(409, 'Prices have changed. Please review the new price and try again.');
+    }
     const batchId = randomUUID();
     const createdAt = nowIso();
     const jobs = request.prompts.map((p, batchIndex): Job => ({
@@ -203,86 +273,119 @@ export class JobRunner {
       media: p.media,
       endpoint: toHiggsfieldRequest(p.prompt, request.settings, p.media).endpoint,
       status: 'pending',
+      priceCents: price,
+      refunded: false,
       createdAt,
       updatedAt: createdAt,
     }));
-    this.store.add(jobs);
+    this.db.transaction(() => {
+      if (this.store.countActive(userId) + jobs.length > this.options.maxActivePerUser) {
+        throw new HttpProblem(429, `You can have up to ${this.options.maxActivePerUser} videos in progress at once. Wait for some to finish.`);
+      }
+      this.store.insert(userId, jobs);
+      for (const job of jobs) {
+        if (job.priceCents > 0) this.billing.move(userId, -job.priceCents, 'generation', { jobId: job.id, note: shorten(job.title ?? job.promptPreview, 80) });
+      }
+    })();
     void this.drain();
     return jobs;
   }
 
-  /** A new job with the same prompt, settings and images (a new billable generation). */
-  retry(id: string): Job {
-    const job = this.store.require(id);
-    if (ACTIVE_STATUSES.includes(job.status)) throw new HttpProblem(409, 'This job is still running');
-    return this.enqueue({ settings: job.settings, prompts: [{ title: job.title, prompt: job.prompt, media: job.media }] })[0]!;
+  /** A new video with the same prompt, images and settings (charged again). */
+  retry(id: string, userId: string, expectedPriceCents?: number): Job {
+    const row = this.store.owned(id, userId);
+    if (ACTIVE.includes(row.status)) throw new HttpProblem(409, 'This video is still being made');
+    const job = toJob(row);
+    return this.enqueue(userId, { settings: job.settings, prompts: [{ title: job.title, prompt: job.prompt, media: job.media }] }, expectedPriceCents)[0]!;
   }
 
-  async cancel(id: string): Promise<Job> {
-    const job = this.store.require(id);
-    if (job.status === 'pending') {
-      return this.store.update(id, { status: 'canceled', error: 'Canceled before it was sent to Higgsfield', finishedAt: nowIso() })!;
+  async cancel(id: string, userId: string): Promise<JobRow> {
+    const row = this.store.owned(id, userId);
+    if (row.status === 'pending') {
+      this.end(row, 'canceled', 'Canceled before it started.');
+      return row;
     }
-    if (job.status === 'queued' && job.requestId && this.api) {
-      const result = await this.api.cancel(job.requestId);
+    if (row.status === 'queued' && row.request_id && this.api) {
+      const result = await this.api.cancel(row.request_id).catch(() => 'error' as const);
       if (result === 'canceled') {
-        return this.store.update(id, { status: 'canceled', error: 'Canceled', finishedAt: nowIso() })!;
+        this.end(row, 'canceled', 'Canceled.');
+        return row;
       }
-      await this.poll(job);
+      await this.poll(row);
     }
-    if (job.status === 'queued' || job.status === 'in_progress') {
-      throw new HttpProblem(409, 'Generation has already started; Higgsfield can only cancel requests that are still queued');
+    if (row.status === 'queued' || row.status === 'in_progress' || row.status === 'submitting') {
+      throw new HttpProblem(409, 'This video has already started and can no longer be canceled');
     }
-    if (job.status === 'submitting') throw new HttpProblem(409, 'This job is being submitted right now; try again in a moment');
-    throw new HttpProblem(409, 'This job has already finished');
+    throw new HttpProblem(409, 'This video has already finished');
   }
 
-  async refresh(id: string): Promise<Job> {
-    const job = this.store.require(id);
-    if (job.status === 'queued' || job.status === 'in_progress') await this.poll(job);
-    return job;
+  async refresh(id: string, userId: string): Promise<JobRow> {
+    const row = this.store.owned(id, userId);
+    if (row.status === 'queued' || row.status === 'in_progress') await this.poll(row);
+    return row;
   }
 
-  remove(id: string): void {
-    const job = this.store.require(id);
-    if (ACTIVE_STATUSES.includes(job.status)) throw new HttpProblem(409, 'Cancel or wait for this job before deleting it');
-    this.store.remove(id);
+  remove(id: string, userId: string): void {
+    const row = this.store.owned(id, userId);
+    if (ACTIVE.includes(row.status)) throw new HttpProblem(409, 'Cancel or wait for this video before deleting it');
+    this.store.softDelete(row);
   }
 
-  /** Submit pending jobs one at a time. */
+  /** Admin: give a charge back (e.g. a completed video the customer was unhappy with). */
+  adminRefund(id: string, adminEmail: string): boolean {
+    const row = this.store.row(id);
+    if (!row) throw new HttpProblem(404, 'No such job');
+    if (ACTIVE.includes(row.status)) throw new HttpProblem(409, 'Wait for this video to finish first');
+    const refunded = this.billing.refundJob(row, `Refunded by support · ${videoName(row)}`, adminEmail);
+    if (refunded) this.store.changed(row.user_id);
+    return refunded;
+  }
+
   private async drain(): Promise<void> {
-    if (this.submitting || !this.api) return;
-    this.submitting = true;
-    try {
-      for (let job = this.store.nextPending(); job; job = this.store.nextPending()) {
-        this.store.update(job.id, { status: 'submitting' });
-        const { endpoint, input } = toHiggsfieldRequest(job.prompt, job.settings, job.media);
-        try {
-          const accepted = await this.api.submit(endpoint, input);
-          const status: JobStatus = accepted.status === 'in_progress' ? 'in_progress' : 'queued';
-          this.store.update(job.id, { status, requestId: accepted.requestId, submittedAt: nowIso() });
-          console.log(`Submitted job ${job.id} -> request ${accepted.requestId} (${endpoint}; ${describeInput(input)})`);
-        } catch (error) {
-          const problem = error instanceof HiggsfieldError ? error : new HiggsfieldError(String(error));
-          // No HTTP status means the request may or may not have reached Higgsfield.
-          const message =
-            problem.httpStatus === undefined
-              ? `${problem.message}. It may or may not have reached Higgsfield; check your console before retrying.`
-              : problem.message;
-          this.store.update(job.id, { status: 'error', error: message, finishedAt: nowIso() });
-          console.warn(`Job ${job.id} was not submitted: ${message}`);
-          if (problem.httpStatus === 401 || problem.httpStatus === 403) this.failPending(`Not submitted: ${problem.message}`);
-        }
-      }
-    } finally {
-      this.submitting = false;
+    if (!this.api || this.serviceStatus().paused) return;
+    while (this.inFlight < this.options.submitConcurrency) {
+      const row = this.db.transaction(() => {
+        const next = this.store.withStatus('pending')[0];
+        if (next) this.store.update(next, { status: 'submitting' });
+        return next;
+      })();
+      if (!row) return;
+      this.inFlight++;
+      void this.submit(row).finally(() => {
+        this.inFlight--;
+        void this.drain();
+      });
     }
   }
 
-  /** Account-level failures (bad key, no credits) would fail every remaining job the same way. */
-  private failPending(reason: string): void {
-    for (const job of this.store.all()) {
-      if (job.status === 'pending') this.store.update(job.id, { status: 'error', error: reason, finishedAt: nowIso() });
+  private async submit(row: JobRow): Promise<void> {
+    const job = toJob(row);
+    const { endpoint, input } = toHiggsfieldRequest(job.prompt, job.settings, job.media);
+    try {
+      const accepted = await this.api!.submit(endpoint, input);
+      this.store.update(row, {
+        status: accepted.status === 'in_progress' ? 'in_progress' : 'queued',
+        requestId: accepted.requestId,
+        submittedAt: nowIso(),
+      });
+      console.log(`Submitted job ${row.id} (user ${row.user_id}) -> request ${accepted.requestId} (${endpoint}; ${describeInput(input)})`);
+    } catch (error) {
+      const problem = error instanceof HiggsfieldError ? error : new HiggsfieldError(String(error));
+      const status = problem.httpStatus;
+      if (status === 401 || status === 403 || status === 429) {
+        // Account-level trouble (bad key, no Higgsfield credit, rate limit): nothing was generated,
+        // so put the job back in line and hold submissions for a while.
+        const minutes = status === 429 ? 1 : 5;
+        this.pause = { until: Date.now() + minutes * 60_000, reason: problem.message };
+        this.store.update(row, { status: 'pending' });
+        console.error(`Submissions paused for ${minutes} min: ${problem.message}`);
+        return;
+      }
+      if (status === 400 || status === 422) {
+        this.end(row, 'error', `The video service rejected this request: ${problem.message.replace(/^Invalid input \(HTTP \d+\): /, '')}.`, problem.message);
+      } else {
+        this.end(row, 'error', 'The video service is unavailable right now. Please try again later.', problem.message);
+      }
     }
   }
 
@@ -290,63 +393,79 @@ export class JobRunner {
     if (this.polling || !this.api) return;
     this.polling = true;
     try {
-      for (const job of this.store.all()) {
-        if (job.status === 'queued' || job.status === 'in_progress') await this.poll(job);
+      const rows = this.store.withStatus('queued', 'in_progress').filter((row) => row.request_id);
+      for (let i = 0; i < rows.length; i += this.options.pollConcurrency) {
+        await Promise.all(rows.slice(i, i + this.options.pollConcurrency).map((row) => this.poll(row)));
+      }
+      const stale = Date.now() - this.options.maxPendingMs;
+      for (const row of this.store.withStatus('pending')) {
+        if (Date.parse(row.created_at) < stale) this.end(row, 'error', 'The video could not be started in time.', this.pause?.reason ?? 'Pending too long');
       }
     } finally {
       this.polling = false;
     }
   }
 
-  private async poll(job: Job): Promise<void> {
-    if (!this.api || !job.requestId) return;
+  private async poll(row: JobRow): Promise<void> {
+    if (!this.api || !row.request_id) return;
     try {
-      this.apply(job, await this.api.status(job.requestId));
+      this.apply(row, await this.api.status(row.request_id));
     } catch (error) {
       if (error instanceof HiggsfieldError && error.httpStatus === 404) {
-        this.end(job, 'error', 'Higgsfield no longer knows this request (HTTP 404)');
+        this.end(row, 'error', 'The video service lost track of this request.', 'Status returned HTTP 404');
         return;
       }
-      // Anything else (network trouble, 5xx, 429): keep the job active and try again next tick.
+      // Network trouble, 5xx, 429: keep waiting; the next tick tries again.
     }
-    const started = Date.parse(job.submittedAt ?? job.createdAt);
-    if ((job.status === 'queued' || job.status === 'in_progress') && Date.now() - started > this.options.maxWaitMs) {
-      const minutes = Math.round(this.options.maxWaitMs / 60_000);
-      this.end(job, 'error', `No final status after ${minutes} minutes. It may still finish; check your Higgsfield console.`);
+    const started = Date.parse(row.submitted_at ?? row.created_at);
+    if ((row.status === 'queued' || row.status === 'in_progress') && Date.now() - started > this.options.maxWaitMs) {
+      this.end(row, 'error', 'The video took too long to finish.', `No final status after ${Math.round(this.options.maxWaitMs / 60_000)} minutes`);
     }
   }
 
-  private apply(job: Job, remote: RemoteStatus): void {
+  private apply(row: JobRow, remote: RemoteStatus): void {
     switch (remote.status) {
       case 'queued':
       case 'in_progress':
-        if (job.status !== remote.status) this.store.update(job.id, { status: remote.status });
+        if (row.status !== remote.status) this.store.update(row, { status: remote.status });
         return;
       case 'completed':
         if (remote.videoUrl) {
-          this.store.update(job.id, { status: 'completed', videoUrl: remote.videoUrl, error: undefined, finishedAt: nowIso() });
-          console.log(`Job ${job.id} completed (request ${job.requestId})`);
+          this.store.update(row, { status: 'completed', videoUrl: remote.videoUrl, finishedAt: nowIso() });
+          console.log(`Job ${row.id} completed (request ${row.request_id})`);
         } else {
-          this.end(job, 'error', 'Higgsfield reported completion but returned no video URL');
+          this.end(row, 'error', 'The video service finished without returning a video.', 'Completed without video.url');
         }
         return;
-      case 'failed':
-        this.end(job, 'failed', remote.reason ?? 'Generation failed; Higgsfield gave no reason');
+      case 'failed': {
+        const reason = customerReason(remote.reason);
+        this.end(row, 'failed', `The video could not be generated${reason ? `: ${reason}` : ''}.`, remote.reason);
         return;
-      case 'nsfw':
-        this.end(job, 'nsfw', remote.reason ?? 'Rejected by content moderation');
+      }
+      case 'nsfw': {
+        const reason = customerReason(remote.reason);
+        this.end(row, 'nsfw', `Blocked by the content filter${reason ? `: ${reason}` : ''}. Try rephrasing your prompt.`, remote.reason);
         return;
+      }
       case 'canceled':
-        this.end(job, 'canceled', remote.reason ?? 'Canceled');
+        this.end(row, 'canceled', 'Canceled.', remote.reason);
         return;
       default:
       // Unknown state: keep polling.
     }
   }
 
-  /** Record a final non-success state, and say why in the terminal so failures are easy to report. */
-  private end(job: Job, status: 'failed' | 'nsfw' | 'canceled' | 'error', reason: string): void {
-    this.store.update(job.id, { status, error: reason, finishedAt: nowIso() });
-    console.warn(`Job ${job.id} (request ${job.requestId ?? 'none'}) ended ${status}: ${reason}`);
+  /** Final state without a video: refund once, and tell the customer. */
+  private end(row: JobRow, status: 'failed' | 'nsfw' | 'canceled' | 'error', message: string, detail?: string): void {
+    this.db.transaction(() => {
+      const refunded = row.price_cents > 0 && this.billing.refundJob(row, `${REFUND_NOTE[status]} · ${videoName(row)}`);
+      this.store.update(row, {
+        status,
+        error: refunded ? `${message} Your credit was refunded.` : message,
+        detail: detail ?? message,
+        finishedAt: nowIso(),
+      });
+    })();
+    console.warn(`Job ${row.id} (user ${row.user_id}, request ${row.request_id ?? 'none'}) ended ${status}: ${detail ?? message}`);
   }
 }

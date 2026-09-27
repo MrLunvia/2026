@@ -101,44 +101,59 @@ build/
 
 ---
 
-## Adron Video Engine: Seedance 2.5 video UI (Higgsfield API)
+## Adron Video Engine: a paid AI video platform (Seedance 2.5 via Higgsfield)
 
-A local web app for making Seedance 2.5 videos through the Higgsfield API with the official [`@higgsfield/client`](https://www.npmjs.com/package/@higgsfield/client) SDK. Your API key stays on the server; the browser never sees it.
+A website you can sell: customers sign up, buy credit, and turn long prompts and images into Seedance 2.5 videos made through the Higgsfield API. The default price is **$12.00 per 30-second 720p video** ($0.40 per second at 720p, $0.30 at 480p), and you can change it any time in the admin dashboard. Your Higgsfield and payment keys stay on the server; browsers never see them.
 
-**Features**
+**For customers**
 
-- Any number of prompts per batch (up to 500), each up to **50,000 words**. Import `.txt`/`.md` scripts and **split long scripts into scenes** (at scene headings, `---` lines, or by paragraph), with an optional style prefix for every scene.
-- **Image references** per prompt: a start frame (plus an optional end frame) for image-to-video, or up to 9 reference images to keep characters, products and style consistent. Add them by file picker, drag and drop, paste, or public URL; files upload to Higgsfield storage through the server.
-- Output settings: duration 4–30 s, 480p or 720p, aspect ratio 21:9 to 9:16, audio on or off.
-- Live generations panel: queued → generating → completed, with an inline player and download. Failed, moderated (`nsfw`) and canceled jobs are shown as such, never as successes. Cancel (while queued), retry, reuse and delete.
-- Drafts autosave in the browser (IndexedDB); job history is kept in `data/jobs.json`.
+- Home page with features, pricing and FAQ; sign up, log in, password reset by email.
+- Credit wallet: buy packs by card (Stripe) or UPI/cards/net banking (Razorpay). Credit never expires.
+- Studio: prompts of up to **50,000 words**, `.txt` import and a scene splitter for long scripts, start/end frames or up to 9 reference images, 4–30 s, 480p/720p, six aspect ratios, sound on/off.
+- The exact price is shown before anything is charged. Videos that fail, are blocked by the content filter, or are canceled before starting are **refunded automatically**.
+- My videos (live progress, play, download), and an account page with every charge, refund and payment.
+- Terms, Privacy, Refund & Cancellation and Contact pages (templates: have them reviewed for your business).
 
-**Run it on GitHub (nothing to install)**
+**For you (Admin, for the emails in `ADMIN_EMAILS`)**
 
-1. Add your key once: on GitHub open **Settings → Codespaces → Secrets → New secret**, name it `HF_CREDENTIALS`, set the value to `key-id:key-secret`, and give it access to this repository.
-2. [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/MrLunvia/2026?quickstart=1), or use **Code → Codespaces → Create codespace** on the branch that has this app.
-3. Wait for setup to finish (a few minutes the first time). The app installs, builds, starts, and opens in a new browser tab. If no tab opens, open port 3000 from the **Ports** panel.
+- Revenue, customers, videos made, unspent customer credit.
+- Customers: search, add or remove credit (for example after a bank transfer), disable accounts.
+- Every video with the technical failure reason, and one-click refunds. Payments list. Prices, credit packs and sign-up bonus.
+- If Higgsfield rejects the platform's key or your Higgsfield credit runs out, new videos wait in the queue (nobody is charged twice) and the dashboard says why.
 
-The app's address is private to your GitHub account. If you add or change the secret while a codespace is running, stop and restart the codespace. Stop it when you're done (GitHub → **Your codespaces**) so it doesn't use up your Codespaces hours.
+**How the money works:** customers pay you through Stripe or Razorpay and get credit. Each video takes its price from their credit when it starts, and your Higgsfield account pays Higgsfield for the generation. Your margin is your price minus Higgsfield's cost, payment fees and taxes, so check Higgsfield's current price for a 30-second 720p Seedance 2.5 video before you pick yours. Also confirm that Higgsfield's API terms allow reselling generations, and that your payment account (Stripe/Razorpay KYC) is approved for this kind of digital service.
 
-**Run it on your computer**
+### Deploy on adronstore.in
 
-1. `npm install`
-2. `cp .env.example .env.local`, then set `HF_CREDENTIALS=key-id:key-secret` in `.env.local` (git-ignored; never commit it).
-3. `npm run dev` (development, hot reload) or `npm run build && npm start` (production build).
-4. Open http://127.0.0.1:3000
+This is a Node.js app with its own database file, so it needs a server that runs Docker (shared website hosting such as a WordPress/Shopify plan can't run it). A small VPS (1 vCPU, 1–2 GB RAM) is enough to start. The usual setup is a subdomain such as **video.adronstore.in**, so your current adronstore.in site keeps working and links to it.
 
-Every video is a separate billable request. Nothing is sent until you confirm the batch summary; batches of more than 10 videos need an extra acknowledgment. Jobs are submitted one at a time, a failed submission is never retried automatically, and nothing resumes after a server restart.
+1. **Server:** create an Ubuntu VPS (Hostinger VPS, DigitalOcean, AWS Lightsail, …) and install Docker: `curl -fsSL https://get.docker.com | sh`
+2. **DNS:** where adronstore.in's DNS is managed, add an **A record**: name `video`, value = the VPS's IP address. (To use adronstore.in itself instead, point its A record at the VPS; the current site would then be replaced.)
+3. **Get the code** on the server:
+   ```bash
+   git clone https://github.com/MrLunvia/2026.git adron && cd adron
+   git checkout claude/higgsfield-seedance-setup-7y1811   # or the branch you merged it into
+   cp .env.example .env && nano .env
+   ```
+   Fill in at least `HF_CREDENTIALS`, `ADMIN_EMAILS`, `PUBLIC_URL=https://video.adronstore.in`, `SUPPORT_EMAIL`, your business details, a payment provider, and `SMTP_URL`. `.env` is git-ignored; keep it only on the server.
+4. **Start:** `docker compose up -d --build`. Caddy gets and renews the HTTPS certificate automatically (ports 80 and 443 must be open). Open https://video.adronstore.in and sign up with your admin email: the **Admin** tab appears.
+5. **Payments** (use test mode first, then switch to live keys):
+   - **Stripe:** Developers → Webhooks → add endpoint `https://video.adronstore.in/api/webhooks/stripe` with events `checkout.session.completed` and `checkout.session.async_payment_succeeded`; put the signing secret in `STRIPE_WEBHOOK_SECRET`.
+   - **Razorpay:** Account & Settings → Webhooks → `https://video.adronstore.in/api/webhooks/razorpay` with events `payment.captured` and `order.paid`; put its secret in `RAZORPAY_WEBHOOK_SECRET`. To charge in rupees set `CURRENCY=INR` and prices in rupees (Razorpay needs international payments enabled for USD).
+   - **Manual:** leave the keys empty, write `MANUAL_PAYMENT_NOTE` (for example your UPI ID), and add credit in Admin → Customers when someone pays.
+6. **Backups:** `docker compose exec app npm run backup` copies the database (accounts, balances, payments) to `/data/backups` inside the `app-data` volume and keeps the newest 14. Run it daily from cron and copy the backups off the server.
+7. **Updates:** `git pull && docker compose up -d --build` (data is kept in the volume). **Logs:** `docker compose logs -f app`.
 
-**Configuration** (environment or `.env.local`)
+Any other Docker host with a persistent volume works too (Railway, Render with a disk, Fly.io): run the `Dockerfile`, mount a volume at `/data`, set the variables from `.env.example`, and set `TRUST_PROXY=1` behind the host's proxy.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `HF_CREDENTIALS` | none | Higgsfield key as `key-id:key-secret`. Without it the UI runs but cannot upload or generate. |
-| `PORT`, `HOST` | `3000`, `127.0.0.1` | Where the server listens. There is no login, so keep it local or put your own authentication in front of it. |
-| `ALLOWED_HOSTS` | none | Extra host names to accept (comma-separated) when serving under another name. |
-| `DATA_DIR` | `data/` | Where job history is stored. |
-| `HF_BASE_URL` | `https://api.higgsfield.ai` | API base URL, for proxies or testing. |
+### Try it on GitHub or your computer
+
+- **GitHub Codespaces:** add `HF_CREDENTIALS` (and `ADMIN_EMAILS`) under GitHub **Settings → Codespaces → Secrets**, then [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/MrLunvia/2026?quickstart=1). The app installs, builds and opens itself. Stop the codespace when you're done.
+- **Your computer:** `npm install`, `cp .env.example .env.local` and fill it in, then `npm run dev` (or `npm run build && npm start`) and open http://127.0.0.1:3000.
+
+Without payment keys the site runs in manual-payment mode, which is handy for trying things out: add credit to your own account from the Admin page. Every generated video is a real, billable Higgsfield request.
+
+**Configuration:** every setting is listed with an explanation in [`.env.example`](.env.example). `npm run typecheck` type-checks everything; `npm run example` runs the original one-off CLI generation (`index.ts`, also billable).
 
 **How prompts map to Seedance 2.5** (`server/requests.ts`)
 
@@ -146,6 +161,4 @@ Every video is a separate billable request. Nothing is sent until you confirm th
 - Start/end frame: `bytedance/seedance-2.5/image-to-video` with `image_url` and `end_image_url` (framing comes from the image)
 - Reference images: `bytedance/seedance-2.5/reference-to-video` with `image_urls`
 
-These workflow and field names have not been checked against Higgsfield's official model reference, which was unreachable when this was built. If Higgsfield rejects a field, the job shows the API's error message; options and limits live in `shared/options.ts`.
-
-`npm run example` runs the original one-off CLI generation (`index.ts`, also billable), and `npm run typecheck` type-checks everything.
+These workflow and field names have not been checked against Higgsfield's official model reference, which was unreachable when this was built. If Higgsfield rejects a field, the video fails with the API's reason (shown to the admin) and the customer is refunded; options and limits live in `shared/options.ts`.

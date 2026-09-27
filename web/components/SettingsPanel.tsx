@@ -14,16 +14,18 @@ export function SettingsPanel({
   settings,
   onChange,
   framesCount,
+  hint = 'Applies to every prompt in this batch',
 }: {
   settings: GenerationSettings;
   onChange: (patch: Partial<GenerationSettings>) => void;
   framesCount: number;
+  hint?: string;
 }) {
   return (
     <section className="card settings" aria-labelledby="settings-title">
       <div className="card-heading">
         <h2 id="settings-title">Output</h2>
-        <p className="hint">Applies to every prompt in this batch</p>
+        <p className="hint">{hint}</p>
       </div>
 
       <div className="settings-grid">
