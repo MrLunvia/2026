@@ -9,6 +9,8 @@ export function Dialog({
   children,
   footer,
   wide = false,
+  size,
+  className,
 }: {
   open: boolean;
   title: ReactNode;
@@ -16,6 +18,9 @@ export function Dialog({
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  /** `full` fills most of the window (video viewer). */
+  size?: 'wide' | 'full';
+  className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -30,7 +35,7 @@ export function Dialog({
   return (
     <dialog
       ref={ref}
-      className={wide ? 'dialog dialog-wide' : 'dialog'}
+      className={['dialog', (wide || size === 'wide') && 'dialog-wide', size === 'full' && 'dialog-full', className].filter(Boolean).join(' ')}
       aria-labelledby={titleId}
       onClose={onClose}
       onClick={(event) => {

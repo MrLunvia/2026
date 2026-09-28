@@ -3,22 +3,11 @@ import { INPUT_TYPES, endpointFor, inputLabel, modelById, qualityOf, type Endpoi
 import { UPLOAD_ACCEPT } from '../../shared/options.ts';
 import type { GenerationSettings } from '../../shared/types.ts';
 import { referenceLimits, type ComposerActions, type DraftMedia, type DraftPrompt, type Slot } from '../composer.ts';
-import { Icon, type IconName } from './Icon.tsx';
-
-const MODE_ICON: Record<InputType, IconName> = {
-  text: 'text',
-  frames: 'frames',
-  references: 'layers',
-  edit: 'scissors',
-  extend: 'arrow',
-  motion: 'user',
-  swap: 'refresh',
-  'video-reference': 'film',
-};
+import { MODE_ICON, clock } from '../jobInfo.ts';
+import { Icon } from './Icon.tsx';
 
 const KIND_LABEL: Record<MediaKind, string> = { image: 'Image', video: 'Video', audio: 'Audio' };
 
-const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, '0')}`;
 
 function Thumb({ media, label, onRemove, large = false }: { media: DraftMedia; label?: string; onRemove: () => void; large?: boolean }) {
   const name = label ?? media.name;

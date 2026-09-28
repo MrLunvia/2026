@@ -1,117 +1,45 @@
-import { useState } from 'react';
-import { MODELS, modelById, modelControls, qualityOf, type VideoModel } from '../../shared/models.ts';
-import { fromPerSecondCents, perSecondCents } from '../../shared/pricing.ts';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { MODELS, modelById, modelControls, qualityOf } from '../../shared/models.ts';
+import { perSecondCents } from '../../shared/pricing.ts';
 import type { GenerationSettings, Pricing } from '../../shared/types.ts';
-import { Dialog } from './Dialog.tsx';
-import { Icon } from './Icon.tsx';
+import { MODEL_BADGES } from '../modelInfo.ts';
+import { Icon, type IconName } from './Icon.tsx';
+import { ModelMark, ModelPicker } from './ModelPicker.tsx';
 
 const QUICK_DURATIONS = [5, 10, 15, 30];
 
 function ratioShape(ratio: string) {
-  if (ratio === 'auto') return { width: '18px', height: '18px', borderStyle: 'dashed' };
+  if (ratio === 'auto') return { width: '14px', height: '14px', borderStyle: 'dashed' };
   const [w, h] = ratio.split(':').map(Number) as [number, number];
-  const scale = 22 / Math.max(w, h);
+  const scale = 18 / Math.max(w, h);
   return { width: `${Math.round(w * scale)}px`, height: `${Math.round(h * scale)}px` };
 }
 
-/** Short capability chips for a model card. */
-function capabilities(model: VideoModel): string[] {
-  const specs = model.qualities.flatMap((q) => Object.values(q.inputs));
-  const maxSeconds = Math.max(0, ...specs.map((s) => (s.duration ? ('options' in s.duration ? Math.max(...s.duration.options) : s.duration.max) : 0)));
-  const top = ['4K', '2K', '1080p', '768p', '720p', '540p', '480p', '360p'].find((r) =>
-    model.qualities.some((q) => q.label.toUpperCase().includes(r.toUpperCase()) || q.resolution?.toUpperCase() === r.toUpperCase()),
-  );
-  const chips = [maxSeconds > 0 ? `Up to ${maxSeconds}s` : 'Video to video', ...(top ? [`Up to ${top}`] : [])];
-  if (specs.some((s) => s.audio === 'generate_audio' || s.audio === 'sound')) chips.push('Sound');
-  if (specs.some((s) => s.start)) chips.push('Image to video');
-  if (specs.some((s) => s.source || s.videos)) chips.push('Video input');
-  return chips;
-}
-
-function ModelPicker({
-  open,
-  current,
-  pricing,
-  money,
-  onClose,
-  onPick,
-}: {
-  open: boolean;
-  current: string;
-  pricing: Pricing;
-  money: (cents: number) => string;
-  onClose: () => void;
-  onPick: (model: string) => void;
-}) {
-  const offered = MODELS.filter((model) => !pricing.disabledModels.includes(model.id));
-  return (
-    <Dialog open={open} wide title="Choose a video model" onClose={onClose}>
-      <div className="model-grid">
-        {offered.map((model) => {
-          const from = fromPerSecondCents(pricing, model.id);
-          return (
-            <button
-              key={model.id}
-              type="button"
-              className={model.id === current ? 'model-card is-active' : 'model-card'}
-              aria-pressed={model.id === current}
-              onClick={() => onPick(model.id)}
-            >
-              <span className="model-card-head">
-                <strong>{model.name}</strong>
-                <span className="muted">{model.maker}</span>
-              </span>
-              <span className="model-card-text">{model.description}</span>
-              <span className="model-chips">
-                {capabilities(model).map((chip) => (
-                  <span key={chip} className="model-chip">
-                    {chip}
-                  </span>
-                ))}
-              </span>
-              {from !== undefined && <span className="model-price">from {money(from)} / second</span>}
-            </button>
-          );
-        })}
-      </div>
-    </Dialog>
-  );
-}
-
-export function SettingsPanel({
-  settings,
-  onChange,
-  pricing,
-  money,
-  hint,
-}: {
+type Settings = {
   settings: GenerationSettings;
   onChange: (patch: Partial<GenerationSettings>) => void;
   pricing: Pricing;
   money: (cents: number) => string;
-  hint?: string;
-}) {
+};
+
+/** The chosen model, with a button that opens the model picker. */
+export function ModelSection({ settings, onChange, pricing, money, hint }: Settings & { hint?: string }) {
   const [picking, setPicking] = useState(false);
   const model = modelById(settings.model) ?? MODELS[0]!;
-  const quality = qualityOf(model, settings.quality) ?? model.qualities[0]!;
-  const controls = modelControls(model, quality.id);
-  const duration = controls.duration;
-  const discrete = duration && 'options' in duration ? duration.options : undefined;
-  const range = duration && 'min' in duration ? duration : undefined;
-
+  const badge = MODEL_BADGES[model.id];
   return (
-    <section className="card settings" aria-labelledby="settings-title">
-      <div className="card-heading">
-        <h2 id="settings-title">Model & output</h2>
+    <section className="panel-block model-section" aria-labelledby="model-title">
+      <div className="block-head">
+        <h2 id="model-title">Model</h2>
         {hint && <p className="hint">{hint}</p>}
       </div>
-
       <button type="button" className="model-button" onClick={() => setPicking(true)} aria-label={`Model: ${model.name}. Change model`}>
-        <span className="model-mark" aria-hidden="true">
-          <Icon name="film" size={18} />
-        </span>
+        <ModelMark model={model} size={42} />
         <span className="model-button-text">
-          <strong>{model.name}</strong>
+          <strong>
+            {model.name}
+            {badge && <span className={`model-badge is-${badge.toLowerCase()}`}>{badge}</span>}
+          </strong>
           <span className="muted">
             {model.maker} · {model.description}
           </span>
@@ -121,99 +49,6 @@ export function SettingsPanel({
           <Icon name="chevron" size={14} />
         </span>
       </button>
-
-      <div className="settings-grid">
-        {model.qualities.length > 1 && (
-          <fieldset className="field field-wide">
-            <legend className="field-label">Quality</legend>
-            <div className="segmented segmented-wrap">
-              {model.qualities.map((q) => {
-                const rate = perSecondCents(pricing, model.id, q.id);
-                return (
-                  <label key={q.id} className={q.id === quality.id ? 'segment is-active' : 'segment'}>
-                    <input type="radio" name="quality" value={q.id} checked={q.id === quality.id} onChange={() => onChange({ quality: q.id })} />
-                    <span>{q.label}</span>
-                    {rate !== undefined && <small className="segment-price">{money(rate)}/s</small>}
-                  </label>
-                );
-              })}
-            </div>
-          </fieldset>
-        )}
-
-        <div className="field">
-          <span className="field-label" id="duration-label">
-            Duration
-          </span>
-          {!duration ? (
-            <p className="hint">Each video is as long as the video you upload.</p>
-          ) : discrete ? (
-            <div className="chips" role="radiogroup" aria-labelledby="duration-label">
-              {discrete.map((d) => (
-                <button key={d} type="button" role="radio" aria-checked={settings.duration === d} className={settings.duration === d ? 'chip is-active' : 'chip'} onClick={() => onChange({ duration: d })}>
-                  {d}s
-                </button>
-              ))}
-            </div>
-          ) : (
-            <>
-              <div className="duration-row">
-                <input
-                  id="duration"
-                  type="range"
-                  aria-labelledby="duration-label"
-                  min={range!.min}
-                  max={range!.max}
-                  step={1}
-                  value={settings.duration}
-                  onChange={(e) => onChange({ duration: Number(e.target.value) })}
-                />
-                <output htmlFor="duration" className="duration-value">
-                  {settings.duration}s
-                </output>
-              </div>
-              <div className="chips" aria-label="Quick durations">
-                {QUICK_DURATIONS.filter((d) => d >= range!.min && d <= range!.max).map((d) => (
-                  <button key={d} type="button" className={settings.duration === d ? 'chip is-active' : 'chip'} onClick={() => onChange({ duration: d })}>
-                    {d}s
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-
-        {controls.audio && (
-          <div className="field">
-            <span className="field-label">Sound</span>
-            <label className="switch">
-              <input type="checkbox" role="switch" checked={settings.generateAudio} onChange={(e) => onChange({ generateAudio: e.target.checked })} />
-              <span className="switch-track" aria-hidden="true" />
-              <Icon name="volume" size={16} />
-              <span>{controls.inputs.includes('motion') && controls.inputs.length === 1 ? 'Keep the video’s sound' : 'Generate audio'}</span>
-            </label>
-          </div>
-        )}
-
-        {controls.aspectRatios.length > 0 && (
-          <fieldset className="field field-wide">
-            <legend className="field-label">Aspect ratio</legend>
-            <div className="ratios">
-              {controls.aspectRatios.map((r) => (
-                <label key={r} className={settings.aspectRatio === r ? 'ratio is-active' : 'ratio'}>
-                  <input type="radio" name="aspect-ratio" value={r} checked={settings.aspectRatio === r} onChange={() => onChange({ aspectRatio: r })} />
-                  <span className="ratio-box">
-                    <span className="ratio-shape" style={ratioShape(r)} />
-                  </span>
-                  <span>{r === 'auto' ? 'Auto' : r}</span>
-                </label>
-              ))}
-            </div>
-            <p className="hint">Prompts that start from an image or a video keep its framing where the model decides it.</p>
-          </fieldset>
-        )}
-      </div>
-
       <ModelPicker
         open={picking}
         current={model.id}
@@ -226,5 +61,194 @@ export function SettingsPanel({
         }}
       />
     </section>
+  );
+}
+
+type Panel = 'quality' | 'duration' | 'ratio';
+
+function SettingChip({
+  id,
+  icon,
+  label,
+  value,
+  open,
+  disabled,
+  onToggle,
+}: {
+  id: Panel;
+  icon: IconName;
+  label: string;
+  value: string;
+  open: boolean;
+  disabled?: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={open ? 'setting-chip is-open' : 'setting-chip'}
+      aria-expanded={disabled ? undefined : open}
+      aria-controls={disabled ? undefined : `setting-${id}`}
+      aria-label={`${label}: ${value}`}
+      title={label}
+      disabled={disabled}
+      onClick={onToggle}
+    >
+      <Icon name={icon} size={15} />
+      <strong>{value}</strong>
+      {!disabled && <Icon name="chevron" size={13} />}
+    </button>
+  );
+}
+
+/** Quality, duration, aspect ratio and sound as compact buttons above Generate; each opens its options. */
+export function OutputSettings({ settings, onChange, pricing, money }: Settings) {
+  const [open, setOpen] = useState<Panel>();
+  const dock = useRef<HTMLDivElement>(null);
+  const model = modelById(settings.model) ?? MODELS[0]!;
+  const quality = qualityOf(model, settings.quality) ?? model.qualities[0]!;
+  const controls = modelControls(model, quality.id);
+  const duration = controls.duration;
+  const discrete = duration && 'options' in duration ? duration.options : undefined;
+  const range = duration && 'min' in duration ? duration : undefined;
+  const ratio = settings.aspectRatio === 'auto' ? 'Auto' : settings.aspectRatio;
+
+  // Close on a click elsewhere or Esc (focus goes back to the button that opened it).
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!dock.current?.contains(event.target as Node)) setOpen(undefined);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setOpen(undefined);
+      dock.current?.querySelector<HTMLButtonElement>(`[aria-controls="setting-${open}"]`)?.focus();
+    };
+    document.addEventListener('pointerdown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const toggle = (panel: Panel) => () => setOpen((current) => (current === panel ? undefined : panel));
+  const pick = (patch: Partial<GenerationSettings>) => {
+    onChange(patch);
+    setOpen(undefined);
+  };
+
+  return (
+    <div className="settings-dock" ref={dock}>
+      {open === 'quality' && (
+        <div id="setting-quality" className="setting-panel" role="group" aria-label="Quality">
+          <p className="setting-title">Quality</p>
+          <div className="quality-options" role="radiogroup" aria-label="Quality">
+            {model.qualities.map((q) => {
+              const rate = perSecondCents(pricing, model.id, q.id);
+              return (
+                <button
+                  key={q.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={q.id === quality.id}
+                  className={q.id === quality.id ? 'quality-option is-active' : 'quality-option'}
+                  onClick={() => pick({ quality: q.id })}
+                >
+                  <span>{q.label}</span>
+                  {rate !== undefined && <small>{money(rate)}/s</small>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {open === 'duration' && duration && (
+        <div id="setting-duration" className="setting-panel" role="group" aria-label="Duration">
+          <p className="setting-title">
+            Duration
+            <output htmlFor="duration" className="duration-value">
+              {settings.duration}s
+            </output>
+          </p>
+          {discrete ? (
+            <div className="chips" role="radiogroup" aria-label="Duration">
+              {discrete.map((d) => (
+                <button key={d} type="button" role="radio" aria-checked={settings.duration === d} className={settings.duration === d ? 'chip is-active' : 'chip'} onClick={() => pick({ duration: d })}>
+                  {d}s
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="duration-row">
+              <input
+                id="duration"
+                type="range"
+                aria-label="Duration in seconds"
+                min={range!.min}
+                max={range!.max}
+                step={1}
+                value={settings.duration}
+                style={{ '--fill': `${((settings.duration - range!.min) / Math.max(1, range!.max - range!.min)) * 100}%` } as CSSProperties}
+                onChange={(e) => onChange({ duration: Number(e.target.value) })}
+              />
+              <div className="chips" aria-label="Quick durations">
+                {QUICK_DURATIONS.filter((d) => d >= range!.min && d <= range!.max).map((d) => (
+                  <button key={d} type="button" className={settings.duration === d ? 'chip is-active' : 'chip'} onClick={() => onChange({ duration: d })}>
+                    {d}s
+                  </button>
+                ))}
+                <span className="hint">
+                  {range!.min}–{range!.max} s
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {open === 'ratio' && controls.aspectRatios.length > 0 && (
+        <div id="setting-ratio" className="setting-panel" role="group" aria-label="Aspect ratio">
+          <p className="setting-title">Aspect ratio</p>
+          <div className="ratios" role="radiogroup" aria-label="Aspect ratio">
+            {controls.aspectRatios.map((r) => (
+              <button
+                key={r}
+                type="button"
+                role="radio"
+                aria-checked={settings.aspectRatio === r}
+                className={settings.aspectRatio === r ? 'ratio is-active' : 'ratio'}
+                title={r === 'auto' ? 'Auto: follows your image or video' : r}
+                onClick={() => pick({ aspectRatio: r })}
+              >
+                <span className="ratio-box">
+                  <span className="ratio-shape" style={ratioShape(r)} />
+                </span>
+                <span>{r === 'auto' ? 'Auto' : r}</span>
+              </button>
+            ))}
+          </div>
+          <p className="hint">Prompts that start from an image or a video keep its framing where the model decides it.</p>
+        </div>
+      )}
+
+      <div className="setting-chips">
+        <SettingChip id="quality" icon="hd" label="Quality" value={quality.label} open={open === 'quality'} disabled={model.qualities.length < 2} onToggle={toggle('quality')} />
+        <SettingChip id="duration" icon="clock" label="Duration" value={duration ? `${settings.duration}s` : 'From video'} open={open === 'duration'} disabled={!duration} onToggle={toggle('duration')} />
+        {controls.aspectRatios.length > 0 && <SettingChip id="ratio" icon="ratio" label="Aspect ratio" value={ratio} open={open === 'ratio'} onToggle={toggle('ratio')} />}
+        {controls.audio && (
+          <button
+            type="button"
+            className={settings.generateAudio ? 'setting-chip is-on' : 'setting-chip'}
+            aria-pressed={settings.generateAudio}
+            title={controls.inputs.includes('motion') && controls.inputs.length === 1 ? 'Keep the video’s sound' : 'Generate audio'}
+            onClick={() => onChange({ generateAudio: !settings.generateAudio })}
+          >
+            <Icon name="volume" size={15} />
+            <strong>{settings.generateAudio ? 'Sound' : 'No sound'}</strong>
+          </button>
+        )}
+      </div>
+    </div>
   );
 }

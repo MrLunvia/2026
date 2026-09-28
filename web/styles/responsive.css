@@ -1,0 +1,449 @@
+/* Smaller screens and reduced motion. */
+
+@media (max-width: 1180px) {
+  .studio {
+    grid-template-columns: minmax(340px, 400px) minmax(0, 1fr);
+  }
+
+  .viewer {
+    grid-template-columns: minmax(0, 1fr) 330px;
+  }
+}
+
+@media (max-width: 1000px) {
+  .reel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .bento {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .feature.span-3 {
+    grid-column: 1 / -1;
+  }
+
+  .auth {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 520px;
+    gap: 24px;
+  }
+
+  .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .viewer {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    overflow-y: auto;
+  }
+
+  .viewer-stage {
+    border-radius: 0;
+  }
+
+  .viewer-video {
+    max-height: 56vh;
+  }
+
+  .viewer-placeholder {
+    min-height: 240px;
+  }
+
+  .viewer-side {
+    overflow: visible;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .dialog-full {
+    height: auto;
+    max-height: calc(100dvh - 24px);
+  }
+
+  .dialog-full .dialog-inner {
+    height: auto;
+    max-height: calc(100dvh - 26px);
+  }
+}
+
+/* One column: the studio switches between Create and My videos with tabs. */
+@media (max-width: 900px) {
+  .app-studio {
+    height: auto;
+    overflow: visible;
+  }
+
+  .tabs {
+    position: sticky;
+    top: var(--topbar);
+    z-index: 20;
+    display: flex;
+    gap: 6px;
+    padding: 10px 16px 8px;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(12px);
+  }
+
+  .tabs button {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 9px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-2);
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .tabs button[aria-pressed='true'] {
+    border-color: transparent;
+    background: var(--text);
+    color: var(--bg);
+  }
+
+  .tabs button[aria-pressed='true'] .count {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+
+  .studio {
+    display: block;
+  }
+
+  .studio[data-tab='create'] .gallery-pane,
+  .studio[data-tab='jobs'] .create-panel {
+    display: none;
+  }
+
+  .create-panel {
+    border-right: 0;
+    background: transparent;
+  }
+
+  .create-scroll {
+    overflow: visible;
+    padding: 8px 16px 16px;
+  }
+
+  .composer-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 15;
+    padding: 10px 16px 14px;
+    border: 1px solid var(--border);
+    border-bottom: 0;
+    border-radius: 18px 18px 0 0;
+    background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
+    backdrop-filter: blur(14px);
+  }
+
+  .gallery-pane {
+    overflow: visible;
+    padding: 8px 16px 32px;
+  }
+
+  .gallery-head h2 {
+    font-size: 18px;
+  }
+
+  .gallery-head .filters {
+    flex-wrap: nowrap;
+    width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .topnav-public {
+    display: none;
+  }
+
+  .topnav {
+    margin-left: 4px;
+  }
+
+  .topnav-link {
+    padding: 8px;
+  }
+
+  .topnav-link span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .brand-name {
+    display: none;
+  }
+
+  .topbar-public .brand-name {
+    display: inline;
+  }
+
+  .steps,
+  .pricing,
+  .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  body {
+    font-size: 14.5px;
+  }
+
+  .topbar {
+    gap: 8px;
+    padding: 0 12px;
+  }
+
+  .topbar-status {
+    gap: 6px;
+  }
+
+  .topbar-status .pill-progress,
+  .avatar,
+  .label-long {
+    display: none;
+  }
+
+  .label-short {
+    display: inline;
+  }
+
+  .balance {
+    padding-left: 10px;
+  }
+
+  .balance-add {
+    padding: 0 7px;
+  }
+
+  .hero {
+    padding: 40px 16px 16px;
+  }
+
+  .lead {
+    font-size: 16px;
+  }
+
+  .hero-prompt textarea {
+    font-size: 15.5px;
+  }
+
+  .hero-prompt-bar {
+    flex-wrap: wrap;
+  }
+
+  .hero-prompt-bar .button {
+    flex: 1;
+  }
+
+  .hero-model select {
+    max-width: 170px;
+  }
+
+  .reel {
+    padding: 0 16px;
+    gap: 10px;
+  }
+
+  .section {
+    padding: 48px 16px;
+  }
+
+  .bento {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .feature.span-2,
+  .feature.span-3 {
+    grid-column: auto;
+  }
+
+  .cta {
+    margin: 0 16px 48px;
+    padding: 44px 18px;
+  }
+
+  .stat-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .auth {
+    padding: 28px 16px;
+  }
+
+  .auth-card,
+  .auth-aside {
+    padding: 20px;
+  }
+
+  .page {
+    padding: 22px 16px 40px;
+  }
+
+  .balance-card .button {
+    width: 100%;
+  }
+
+  .site-footer-inner {
+    padding: 18px 16px;
+  }
+
+  .card {
+    padding: 16px;
+  }
+
+  .model-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* On the home page, phones get a compact two-column list of models. */
+  .model-grid-landing {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .model-grid-landing .model-card {
+    gap: 6px;
+    padding: 12px;
+  }
+
+  .model-grid-landing .model-card-top {
+    flex-wrap: wrap;
+  }
+
+  .model-grid-landing .model-card-text,
+  .model-grid-landing .model-chips,
+  .model-grid-landing .model-badge {
+    display: none;
+  }
+
+  .model-grid-landing .model-card-head strong {
+    font-size: 14px;
+  }
+
+  .model-grid-landing .model-price,
+  .model-grid-landing .model-try {
+    font-size: 12px;
+  }
+
+  .model-button-text .muted {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .frames {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .frames-arrow {
+    align-self: center;
+    transform: none;
+  }
+
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .model-prices {
+    padding: 18px;
+  }
+
+  .preset-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+
+  .dialog-body {
+    padding: 16px;
+  }
+
+  .viewer-side {
+    padding: 16px;
+  }
+
+  .toasts {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    max-width: none;
+  }
+
+  .masonry,
+  .masonry-column {
+    gap: 10px;
+  }
+
+  .media-modes {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .media-modes::-webkit-scrollbar {
+    display: none;
+  }
+
+  .footer-summary .muted {
+    display: none;
+  }
+
+  .setting-chips {
+    flex-wrap: nowrap;
+    gap: 5px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .setting-chip {
+    flex: none;
+    padding: 6px 9px;
+  }
+
+  .setting-chip > svg:last-child:not(:first-child) {
+    display: none;
+  }
+
+  .tile-info {
+    padding: 8px 10px 10px;
+  }
+
+  .tile-meta {
+    font-size: 11px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  /* The model grid below lists every model anyway. */
+  .marquee {
+    display: none;
+  }
+}

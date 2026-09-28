@@ -4,6 +4,8 @@ import type { PaymentProviderName } from '../shared/types.ts';
 
 export interface PlatformConfig {
   appName: string;
+  /** Accent color for buttons and highlights (#rrggbb), when the owner sets BRAND_COLOR. */
+  brandColor?: string;
   /** Public address, e.g. https://video.adronstore.in; used for payment redirects and email links. */
   publicUrl?: string;
   supportEmail?: string;
@@ -35,6 +37,15 @@ function money(value: string | undefined, fallbackCents: number): number {
   const units = Number(value);
   if (!Number.isFinite(units) || units < 0) throw new Error(`Invalid amount: ${value}`);
   return Math.round(units * 100);
+}
+
+/** A #rgb or #rrggbb color, expanded to #rrggbb. */
+function hexColor(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const match = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value);
+  if (!match) throw new Error(`BRAND_COLOR must be a hex color like #c8ff3d, not ${value}`);
+  const hex = match[1]!.toLowerCase();
+  return `#${hex.length === 3 ? [...hex].map((c) => c + c).join('') : hex}`;
 }
 
 function positiveInt(value: string | undefined, fallback: number): number {
@@ -82,6 +93,7 @@ export function loadConfig(env: NodeJS.ProcessEnv, root: string): PlatformConfig
 
   return {
     appName,
+    brandColor: hexColor(trimmed('BRAND_COLOR')),
     publicUrl,
     supportEmail,
     business: { name: trimmed('BUSINESS_NAME'), address: trimmed('BUSINESS_ADDRESS'), phone: trimmed('SUPPORT_PHONE') },

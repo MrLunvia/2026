@@ -88,10 +88,24 @@ export interface JobSummary {
   updatedAt: string;
   submittedAt?: string;
   finishedAt?: string;
+  /** Shown on the home page (the owner's own videos only). */
+  featured?: boolean;
 }
 
 export interface Job extends JobSummary {
   prompt: string;
+}
+
+/** A video on the public home page. */
+export interface ShowcaseItem {
+  id: string;
+  videoUrl: string;
+  title?: string;
+  promptPreview: string;
+  model: string;
+  quality: string;
+  aspectRatio: string;
+  duration: number;
 }
 
 export type PaymentProviderName = 'stripe' | 'razorpay' | 'manual';
@@ -110,6 +124,8 @@ export interface Pricing {
 /** Public, non-secret settings the pages need. */
 export interface PublicConfig {
   appName: string;
+  /** The owner's accent color (#rrggbb), if set. */
+  brandColor?: string;
   supportEmail?: string;
   business: { name?: string; address?: string; phone?: string };
   pricing: Pricing;

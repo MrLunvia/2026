@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { formatMoney } from '../shared/pricing.ts';
 import type { PublicConfig, PublicUser } from '../shared/types.ts';
 import { api, setUnauthorizedHandler } from './api.ts';
+import { applyBrandColor } from './brand.ts';
 
 interface Session {
   config?: PublicConfig;
@@ -46,7 +47,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [refreshConfig, refreshUser]);
 
   useEffect(() => {
-    if (config) document.title = config.appName;
+    if (!config) return;
+    document.title = config.appName;
+    applyBrandColor(config.brandColor);
   }, [config]);
 
   const value = useMemo<Session>(

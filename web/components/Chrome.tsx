@@ -55,9 +55,13 @@ export function SiteHeader({ running = 0 }: { running?: number }) {
           <span>{money(user.balanceCents)}</span>
           <span className="balance-add" aria-hidden="true">
             <Icon name="plus" size={12} />
+            <span className="label-long">Top up</span>
           </span>
           <span className="sr-only">Buy credit</span>
         </button>
+        <span className="avatar" title={user.email} aria-hidden="true">
+          {(user.name || user.email).trim().charAt(0).toUpperCase()}
+        </span>
         <button type="button" className="icon-button" onClick={() => void logout()} title="Log out" aria-label="Log out">
           <Icon name="logout" />
         </button>
@@ -74,6 +78,9 @@ export function PublicHeader() {
     <header className="topbar topbar-public">
       <Brand to="/" />
       <nav className="topnav topnav-public" aria-label="Main">
+        <Link to="/#models" className="topnav-link">
+          Models
+        </Link>
         <Link to="/#features" className="topnav-link">
           Features
         </Link>

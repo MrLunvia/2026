@@ -15,6 +15,7 @@ import {
   type MediaKind,
 } from '../shared/models.ts';
 import { ASPECT_RATIOS, DURATION, LIMITS, UPLOAD_TYPES } from '../shared/options.ts';
+import { withPreset, type Preset, type PresetFamily } from '../shared/presets.ts';
 import { countWords, type Scene } from '../shared/text.ts';
 import type { CreateJobsRequest, GenerationSettings, Job, MediaInput } from '../shared/types.ts';
 import { api } from './api.ts';
@@ -59,6 +60,27 @@ export interface Draft {
 }
 
 export type Notify = (message: string, tone?: 'info' | 'success' | 'error') => void;
+
+// A prompt typed on the home page waits here while the visitor signs up or logs in.
+const PENDING_PROMPT_KEY = 'adron-video-engine/pending-prompt';
+
+export function savePendingPrompt(text: string): void {
+  try {
+    sessionStorage.setItem(PENDING_PROMPT_KEY, text);
+  } catch {
+    // Storage blocked (private mode, settings): the visitor just starts with an empty prompt.
+  }
+}
+
+export function takePendingPrompt(): string | undefined {
+  try {
+    const text = sessionStorage.getItem(PENDING_PROMPT_KEY);
+    sessionStorage.removeItem(PENDING_PROMPT_KEY);
+    return text?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export const DEFAULT_SETTINGS: GenerationSettings = {
   model: DEFAULT_MODEL,
@@ -546,6 +568,19 @@ export function useComposer(notify: Notify, draftKey: string) {
         update((d) => ({ ...d, settings: fitSettings({ ...job.settings }) }));
         notify('Loaded the prompt, media and settings into the composer', 'success');
       },
+
+      /** Text from elsewhere (the home page, an example): fills a lone empty prompt, else becomes a new one. */
+      addPromptText: (text: string, title = '') => {
+        const settings = draftRef.current?.settings ?? DEFAULT_SETTINGS;
+        insertPrompts([newPrompt({ title, text, mode: fitMode('text', settings) })]);
+      },
+
+      /** Write a camera or style preset's sentence into one prompt, or every prompt when `promptId` is undefined. */
+      setPreset: (promptId: string | undefined, family: PresetFamily, preset: Preset | undefined) =>
+        update((d) => ({
+          ...d,
+          prompts: d.prompts.map((p) => (promptId === undefined || p.id === promptId ? { ...p, text: withPreset(p.text, family, preset) } : p)),
+        })),
 
       clearAll: () => {
         draftRef.current?.prompts.forEach((p) => allMedia(p).forEach(release));

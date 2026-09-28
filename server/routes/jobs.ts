@@ -66,6 +66,12 @@ export function jobRoutes(router: Router, { db, config, auth, store, runner, api
     }
   });
 
+  // Public: the videos the owner picked for the home page.
+  router.get('/showcase', (_req, res) => {
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.json({ items: store.showcase() });
+  });
+
   router.get('/jobs', (req, res) => {
     const user = auth.requireUser(req);
     const etag = store.etag(user.id);

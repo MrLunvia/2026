@@ -107,12 +107,14 @@ A website you can sell: customers sign up, buy credit, and turn long prompts, im
 
 **For customers**
 
-- Home page with features, pricing and FAQ; sign up, log in, password reset by email.
+- Home page in the style of today's AI video sites: a prompt box that carries straight into the studio (through sign-up), a showreel of your own best videos, every model with its starting price, features, pricing and FAQ. Sign up, log in, password reset by email.
 - Credit wallet: buy packs by card (Stripe) or UPI/cards/net banking (Razorpay). Credit never expires.
-- Studio: a model picker, then each model's own options — quality (480p to 4K, or Standard/Pro/4K/Turbo tiers), duration, aspect ratio, sound. Prompts of up to **50,000 words**, `.txt` import and a scene splitter for long scripts.
+- Studio in two parts: a **create panel** (model, prompts, media, and compact Quality · Duration · Aspect ratio · Sound buttons above Generate, with the exact price) and a **gallery** of the customer's videos that play on hover, with live progress and a full-screen viewer (details, download, reuse, retry, cancel, delete; ← → to browse).
+- A model picker with search and filters (text to video, image to video, references, video editing, sound, 20 s+, 1080p+), then each model's own options — quality (480p to 4K, or Standard/Pro/4K/Turbo tiers), duration, aspect ratio, sound. Prompts of up to **50,000 words**, `.txt` import and a scene splitter for long scripts.
+- **Camera and style presets** with animated previews (dolly in, orbit, crash zoom, FPV drone, film noir, anime, product ad and more). Picking one writes a visible, editable sentence into the prompt; it can apply to every prompt in a batch.
 - Every input the models take: text only, start/end frames, reference images, videos and audio, edit or extend a video, motion control/transfer, object swap, video reference, and an audio track (Wan 2.6/2.7, Grok). MP4/MOV videos up to 200 MB and 60 s, with upload progress.
 - The exact price is shown before anything is charged. Videos that fail, are blocked by the content filter, or are canceled before starting are **refunded automatically**.
-- My videos (live progress, play, download), and an account page with every charge, refund and payment.
+- An account page with every charge, refund and payment.
 - Terms, Privacy, Refund & Cancellation and Contact pages (templates: have them reviewed for your business).
 
 **For you (Admin, for the emails in `ADMIN_EMAILS`)**
@@ -121,6 +123,8 @@ A website you can sell: customers sign up, buy credit, and turn long prompts, im
 - Customers: search, add or remove credit (for example after a bank transfer), disable accounts.
 - Every video with its model and the technical failure reason, and one-click refunds. Payments list. A price per second for every model and quality, a switch to hide any model, credit packs and sign-up bonus.
 - If Higgsfield rejects the platform's key or your Higgsfield credit runs out, new videos wait in the queue (nobody is charged twice) and the dashboard says why.
+- **Home-page showreel:** open one of your own finished videos in the studio and press *Show on home page*. Customers' videos are never shown there.
+- **Your colors:** set `BRAND_COLOR` (for example your logo's color) and every button and highlight uses it; the site is dark, like most AI video tools.
 
 **How the money works:** customers pay you through Stripe or Razorpay and get credit. Each video takes its price from their credit when it starts, and your Higgsfield account pays Higgsfield for the generation. A video costs its billed seconds × the model's price per second; when a customer uploads a video (edit, extend, motion, video references), its length counts too, mirroring how Higgsfield bills video input. The server measures uploaded videos itself, so the length can't be faked.
 

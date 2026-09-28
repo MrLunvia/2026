@@ -94,6 +94,14 @@ export function adminRoutes(router: Router, { db, config, auth, billing, store, 
     res.json({ refunded: runner.adminRefund(req.params.id, admin.email) });
   });
 
+  // Only the owner's own videos: customers' videos stay private.
+  router.post('/admin/jobs/:id/feature', smallJson, (req, res) => {
+    const admin = auth.requireAdmin(req);
+    const row = store.owned(req.params.id, admin.id);
+    store.setFeatured(row, req.body?.featured === true);
+    res.json({ featured: row.featured_at !== null });
+  });
+
   router.get('/admin/settings', (req, res) => {
     auth.requireAdmin(req);
     res.json({ pricing: billing.pricing(), paymentProvider: config.payments.provider });

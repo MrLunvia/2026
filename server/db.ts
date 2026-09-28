@@ -109,6 +109,11 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX uploads_user ON uploads(user_id, created_at DESC);
   `,
+  // v4: the owner's videos picked for the home page.
+  `
+  ALTER TABLE jobs ADD COLUMN featured_at TEXT;
+  CREATE INDEX jobs_featured ON jobs(featured_at) WHERE featured_at IS NOT NULL;
+  `,
 ];
 
 export function openDatabase(file: string): DB {

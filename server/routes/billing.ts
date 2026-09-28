@@ -11,6 +11,7 @@ export function billingRoutes(router: Router, { db, config, auth, billing, maile
   router.get('/config', (_req, res) => {
     const body: PublicConfig = {
       appName: config.appName,
+      ...(config.brandColor ? { brandColor: config.brandColor } : {}),
       supportEmail: config.supportEmail,
       business: config.business,
       pricing: billing.pricing(),

@@ -10,10 +10,10 @@ import { randomUUID } from 'node:crypto';
 import { DEFAULT_MODEL } from '../shared/models.ts';
 import { mediaCounts, quote } from '../shared/pricing.ts';
 import { countWords, shorten } from '../shared/text.ts';
-import type { AdminJobRow, CreateJobsRequest, GenerationSettings, Job, JobStatus, JobSummary, MediaInput, ServiceStatus } from '../shared/types.ts';
+import type { AdminJobRow, CreateJobsRequest, GenerationSettings, Job, JobStatus, JobSummary, MediaInput, ServiceStatus, ShowcaseItem } from '../shared/types.ts';
 import type { Billing } from './billing.ts';
 import { nowIso, type DB } from './db.ts';
-import { HiggsfieldError, type HiggsfieldApi, type RemoteStatus } from './higgsfield.ts';
+import { HiggsfieldError, isAcceptableUrl, type HiggsfieldApi, type RemoteStatus } from './higgsfield.ts';
 import { HttpProblem, toHiggsfieldRequest } from './requests.ts';
 
 const PREVIEW_CHARS = 280;
@@ -44,6 +44,7 @@ export interface JobRow {
   updated_at: string;
   submitted_at: string | null;
   finished_at: string | null;
+  featured_at: string | null;
 }
 
 /** Jobs from before other models existed stored Seedance 2.5's resolution instead of a model and quality. */
@@ -81,6 +82,7 @@ function toJob(row: JobRow): Job {
     updatedAt: row.updated_at,
     submittedAt: row.submitted_at ?? undefined,
     finishedAt: row.finished_at ?? undefined,
+    ...(row.featured_at ? { featured: true } : {}),
   };
 }
 
@@ -200,6 +202,38 @@ export class JobStore {
   softDelete(row: JobRow): void {
     this.db.prepare('UPDATE jobs SET deleted_at = ? WHERE id = ?').run(nowIso(), row.id);
     this.changed(row.user_id);
+  }
+
+  /** Show (or stop showing) a finished video on the home page. */
+  setFeatured(row: JobRow, featured: boolean): void {
+    if (featured && (row.status !== 'completed' || !row.video_url)) throw new HttpProblem(400, 'Only finished videos can go on the home page');
+    const at = featured ? (row.featured_at ?? nowIso()) : null;
+    this.db.prepare('UPDATE jobs SET featured_at = ? WHERE id = ?').run(at, row.id);
+    row.featured_at = at;
+    this.changed(row.user_id);
+  }
+
+  /** Videos on the home page, newest pick first. Nothing about who made them. */
+  showcase(limit = 12): ShowcaseItem[] {
+    return this.db
+      .prepare<[number], JobRow>(
+        "SELECT * FROM jobs WHERE featured_at IS NOT NULL AND deleted_at IS NULL AND status = 'completed' AND video_url IS NOT NULL ORDER BY featured_at DESC LIMIT ?",
+      )
+      .all(limit)
+      .filter((row) => isAcceptableUrl(row.video_url!))
+      .map((row) => {
+        const settings = storedSettings(row.settings);
+        return {
+          id: row.id,
+          videoUrl: row.video_url!,
+          ...(row.title ? { title: row.title } : {}),
+          promptPreview: row.prompt_preview,
+          model: settings.model,
+          quality: settings.quality,
+          aspectRatio: settings.aspectRatio,
+          duration: settings.duration,
+        };
+      });
   }
 
   countActive(userId: string): number {

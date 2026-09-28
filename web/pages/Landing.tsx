@@ -1,19 +1,32 @@
-/** Public home page: what the product does, what it costs, answers, and a way in. */
-import { useEffect } from 'react';
-import { MODELS } from '../../shared/models.ts';
+/** Public home page: a prompt box that leads into the studio, the models, what it can do, prices and answers. */
+import { useEffect, useRef, useState } from 'react';
+import { MODELS, modelById, qualityOf } from '../../shared/models.ts';
 import { LIMITS } from '../../shared/options.ts';
 import { fromPerSecondCents, headlinePriceCents } from '../../shared/pricing.ts';
-import { Icon, type IconName } from '../components/Icon.tsx';
+import type { ShowcaseItem } from '../../shared/types.ts';
+import { api } from '../api.ts';
+import { savePendingPrompt } from '../composer.ts';
 import { PublicHeader, SiteFooter } from '../components/Chrome.tsx';
+import { Icon, type IconName } from '../components/Icon.tsx';
+import { EXAMPLES, exampleText } from '../components/Inspiration.tsx';
+import { ModelCardBody, ModelMark } from '../components/ModelPicker.tsx';
+import { Scene } from '../components/Scene.tsx';
 import { formatNumber } from '../format.ts';
-import { Link } from '../router.tsx';
+import { offeredModels } from '../modelInfo.ts';
+import { Link, navigate } from '../router.tsx';
 import { useSession } from '../session.tsx';
 
-const FEATURES: { icon: IconName; title: string; body: string }[] = [
+const FEATURES: { icon: IconName; title: string; body: string; span?: 2 | 3 }[] = [
   {
     icon: 'sparkles',
     title: `${MODELS.length} leading video models`,
-    body: 'Seedance, Kling, Wan, MiniMax, LTX, PixVerse, Grok Imagine, Happy Horse, Cinema Studio and Genjutsu, all in one studio.',
+    body: 'Seedance, Kling, Wan, MiniMax, LTX, PixVerse, Grok Imagine, Happy Horse, Cinema Studio and Genjutsu, side by side in one studio. Switch any time; the price updates as you go.',
+    span: 2,
+  },
+  {
+    icon: 'camera',
+    title: 'Camera moves and looks',
+    body: 'Dolly, orbit, crash zoom, FPV drone, film noir, anime, product ad… pick a preset and it is written into your prompt.',
   },
   {
     icon: 'text',
@@ -23,12 +36,7 @@ const FEATURES: { icon: IconName; title: string; body: string }[] = [
   {
     icon: 'image',
     title: 'Your images and videos',
-    body: 'Animate a start frame, keep characters consistent with reference images, or edit, extend and transfer motion from your own videos.',
-  },
-  {
-    icon: 'film',
-    title: 'Up to 30 seconds, up to 4K',
-    body: 'From quick 5-second clips to 30-second scenes, in every common aspect ratio, most with generated sound.',
+    body: 'Animate a start frame, keep characters consistent with references, or edit, extend and transfer motion from your own clips.',
   },
   {
     icon: 'layers',
@@ -36,25 +44,62 @@ const FEATURES: { icon: IconName; title: string; body: string }[] = [
     body: 'Queue many prompts in one go and download each video as it finishes. Close the tab; it keeps going.',
   },
   {
-    icon: 'wallet',
-    title: 'Pay per video',
-    body: 'No subscription. Buy credit when you need it; it never expires. The exact price shows before you generate.',
-  },
-  {
     icon: 'shield',
-    title: 'Automatic refunds',
-    body: "If a video fails or is blocked by the content filter, the full price goes straight back to your balance.",
+    title: 'Pay per video, refunds automatic',
+    body: 'No subscription. The exact price shows before you generate, and failed or blocked videos are refunded straight away.',
+    span: 3,
   },
 ];
 
 const STEPS: { title: string; body: string }[] = [
-  { title: 'Write or paste', body: 'Describe the scene, paste a script, or import .txt files. Add images if you have them.' },
-  { title: 'Pick a model and format', body: `Choose one of ${MODELS.length} models, then length, quality, aspect ratio and sound. The price updates as you go.` },
+  { title: 'Describe it', body: 'Write a prompt, paste a script, or start from your own images and videos.' },
+  { title: 'Pick a model and look', body: `Choose one of ${MODELS.length} models, then length, quality, ratio, camera move and style. The price updates as you go.` },
   { title: 'Generate and download', body: 'Watch progress live, then play, download or share each finished video.' },
+];
+
+/** A featured video that plays only while it is on screen. */
+function ShowcaseVideo({ item }: { item: ShowcaseItem }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const video = ref.current;
+    if (!video || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry?.isIntersecting) void video.play().catch(() => undefined);
+      else video.pause();
+    });
+    observer.observe(video);
+    return () => observer.disconnect();
+  }, []);
+  const model = modelById(item.model);
+  const quality = model ? qualityOf(model, item.quality) : undefined;
+  return (
+    <figure className="reel-item">
+      <video ref={ref} src={item.videoUrl} muted loop playsInline preload="metadata" />
+      <figcaption>
+        <span className="reel-model">
+          {model?.name ?? item.model}
+          {quality ? ` · ${quality.label}` : ''}
+        </span>
+        <span className="reel-prompt">{item.title ?? item.promptPreview}</span>
+      </figcaption>
+    </figure>
+  );
+}
+
+const SAMPLE_REEL = [
+  { model: 'seedance-2.5', camera: 'dolly-in', look: 'golden-hour', caption: 'Harbor at golden hour' },
+  { model: 'kling-3.0', camera: 'tracking', look: 'cyberpunk', caption: 'Neon rain' },
+  { model: 'wan-3.0', camera: 'aerial', look: 'cinematic', caption: 'Mars walk' },
+  { model: 'hailuo-2.3', camera: 'orbit', look: 'fantasy', caption: 'Enchanted valley' },
+  { model: 'kling-o3', camera: 'crash-zoom', look: 'noir', caption: 'The detective' },
+  { model: 'pixverse-6', camera: 'static', look: 'clay', caption: 'Clay fox' },
 ];
 
 export function Landing() {
   const { config, user, money } = useSession();
+  const [idea, setIdea] = useState('');
+  const [chosen, setChosen] = useState('seedance-2.5');
+  const [showcase, setShowcase] = useState<ShowcaseItem[]>([]);
 
   // Open /#pricing etc. at the right place on first load.
   useEffect(() => {
@@ -62,12 +107,18 @@ export function Landing() {
     if (id) requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView());
   }, []);
 
+  useEffect(() => {
+    api.showcase().then(setShowcase, () => undefined);
+  }, []);
+
   if (!config) return null;
   const { pricing, payments } = config;
   const hero = headlinePriceCents(pricing);
   const start = user ? '/app' : '/signup';
-  const offered = MODELS.filter((model) => !pricing.disabledModels.includes(model.id));
-  const rate = (model: string, quality: string) => pricing.perSecond[model]?.[quality] ?? 0;
+  const offered = offeredModels(pricing.disabledModels);
+  const model = offered.find((m) => m.id === chosen) ?? offered[0];
+  const studioFor = (id: string) => (user ? `/app?model=${id}` : `/signup?next=${encodeURIComponent(`/app?model=${id}`)}`);
+  const rate = (modelId: string, quality: string) => pricing.perSecond[modelId]?.[quality] ?? 0;
   const examples: { model: string; label: string; cents: number }[] = [
     { model: 'seedance-2.5', label: 'Seedance 2.5 · 30 s · 720p', cents: hero },
     { model: 'seedance-2.5', label: 'Seedance 2.5 · 30 s · 480p', cents: 30 * rate('seedance-2.5', '480p') },
@@ -98,6 +149,10 @@ export function Landing() {
       a: 'Yes, depending on the model: animate a start (and end) frame, add reference images, videos or audio to keep a character, product or style consistent, edit or extend a video, transfer its motion to a new character, or swap objects in it.',
     },
     {
+      q: 'What do the camera and style presets do?',
+      a: 'They add one plain sentence to your prompt, such as “Camera: slow, smooth dolly-in toward the subject.” You can see and edit it; the models follow written directions like these.',
+    },
+    {
       q: 'What isn’t allowed?',
       a: 'Sexual content, anything that puts minors at risk, real people without their consent, hateful or violent content, and anything illegal. Every request passes an automatic content filter; blocked requests are refunded.',
     },
@@ -105,75 +160,130 @@ export function Landing() {
     { q: 'How do I pay?', a: payWith },
   ];
 
+  const submit = (event: { preventDefault(): void }) => {
+    event.preventDefault();
+    if (idea.trim()) savePendingPrompt(idea.trim());
+    navigate(studioFor(model?.id ?? 'seedance-2.5'));
+  };
+
   return (
-    <div className="site">
+    <div className="site site-landing">
       <PublicHeader />
       <main>
         <section className="hero">
-          <div className="hero-copy">
-            <span className="eyebrow">
-              <Icon name="sparkles" size={14} />
-              {MODELS.length} video models · up to 30 seconds · up to 4K
-            </span>
-            <h1>
-              Turn any script into a <span className="gradient-text">cinematic video</span>
-            </h1>
-            <p className="lead">
-              Write up to {formatNumber(LIMITS.promptWords)} words or start from your own images and videos, then pick from {MODELS.length} leading
-              models — Seedance, Kling, Wan and more. Pay per video, no subscription: a 30-second 720p Seedance 2.5 video is {money(hero)}.
-            </p>
-            <div className="hero-actions">
-              <Link to={start} className="button button-primary button-large">
-                {user ? 'Open the studio' : 'Start creating'}
-                <Icon name="arrow" size={16} />
-              </Link>
-              <Link to="/#pricing" className="button button-ghost button-large">
-                See pricing
-              </Link>
+          <div className="hero-glow" aria-hidden="true" />
+          <span className="eyebrow">
+            <Icon name="sparkles" size={14} />
+            {MODELS.length} video models · up to 30 seconds · up to 4K
+          </span>
+          <h1>
+            Turn any idea into a <span className="gradient-text">cinematic video</span>
+          </h1>
+          <p className="lead">
+            Seedance, Kling, Wan and more in one studio. Write up to {formatNumber(LIMITS.promptWords)} words or start from your own images and
+            videos. Pay per video, no subscription: a 30-second 720p Seedance 2.5 video is {money(hero)}.
+          </p>
+
+          <form className="hero-prompt" onSubmit={submit}>
+            <label className="sr-only" htmlFor="hero-idea">
+              Describe your video
+            </label>
+            <textarea
+              id="hero-idea"
+              rows={3}
+              maxLength={5000}
+              value={idea}
+              placeholder="Describe the video you imagine… e.g. a lone astronaut crosses red dunes on Mars at sunset"
+              onChange={(e) => setIdea(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submit(e);
+              }}
+            />
+            <div className="hero-prompt-bar">
+              <label className="hero-model">
+                {model && <ModelMark model={model} size={22} />}
+                <span className="sr-only">Model</span>
+                <select value={model?.id} onChange={(e) => setChosen(e.target.value)}>
+                  {offered.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+                <Icon name="chevron" size={14} />
+              </label>
+              <button type="submit" className="button button-primary">
+                <Icon name="sparkles" size={16} />
+                {user ? 'Create in the studio' : 'Start creating'}
+              </button>
             </div>
-            <ul className="hero-trust">
-              <li>
-                <Icon name="check" size={14} /> Pay only for what you make
-              </li>
-              <li>
-                <Icon name="check" size={14} /> Failed videos refunded
-              </li>
-              <li>
-                <Icon name="check" size={14} /> Credit never expires
-              </li>
-            </ul>
-            {!user && pricing.signupBonusCents > 0 && (
-              <p className="hero-bonus">
-                <Icon name="zap" size={14} /> {money(pricing.signupBonusCents)} free credit when you sign up
-              </p>
-            )}
+          </form>
+          <div className="hero-examples" aria-label="Example prompts">
+            {EXAMPLES.slice(0, 4).map((example) => (
+              <button key={example.title} type="button" className="chip" onClick={() => setIdea(exampleText(example))}>
+                {example.title}
+              </button>
+            ))}
           </div>
 
-          <div className="hero-visual" aria-hidden="true">
-            <div className="mock">
-              <div className="mock-bar">
-                <span />
-                <span />
-                <span />
-              </div>
-              <div className="mock-prompt">
-                <span className="mock-label">Prompt 1</span>
-                <p>
-                  Golden hour over a quiet harbor. The camera glides low across the water toward a lone fishing boat as gulls wheel
-                  overhead and the sun slips behind the hills…
-                </p>
-              </div>
-              <div className="mock-video">
-                <span className="mock-play">
-                  <Icon name="play" size={22} />
+          <ul className="hero-trust">
+            <li>
+              <Icon name="check" size={14} /> Pay only for what you make
+            </li>
+            <li>
+              <Icon name="check" size={14} /> Failed videos refunded
+            </li>
+            <li>
+              <Icon name="check" size={14} /> Credit never expires
+            </li>
+          </ul>
+          {!user && pricing.signupBonusCents > 0 && (
+            <p className="hero-bonus">
+              <Icon name="zap" size={14} /> {money(pricing.signupBonusCents)} free credit when you sign up
+            </p>
+          )}
+        </section>
+
+        <section className="reel" aria-label={showcase.length > 0 ? 'Videos made here' : 'What you can make'}>
+          {showcase.length > 0
+            ? showcase.slice(0, 8).map((item) => <ShowcaseVideo key={item.id} item={item} />)
+            : SAMPLE_REEL.filter((item) => !pricing.disabledModels.includes(item.model)).map((item) => (
+                <figure key={item.caption} className="reel-item">
+                  <Scene camera={item.camera} look={item.look} playing />
+                  <figcaption>
+                    <span className="reel-model">{modelById(item.model)?.name}</span>
+                    <span className="reel-prompt">{item.caption}</span>
+                  </figcaption>
+                </figure>
+              ))}
+        </section>
+
+        <div className="marquee" aria-hidden="true">
+          <div className="marquee-track">
+            {[...offered, ...offered].map((m, i) => (
+              <span key={`${m.id}-${i}`} className="marquee-item">
+                <ModelMark model={m} size={22} />
+                {m.name}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <section id="models" className="section">
+          <header className="section-head">
+            <h2>Every top video model, one studio</h2>
+            <p>Pick the right model for each shot. Prices are per second of video and shown before you generate.</p>
+          </header>
+          <div className="model-grid model-grid-landing">
+            {offered.map((m) => (
+              <Link key={m.id} to={studioFor(m.id)} className="model-card">
+                <ModelCardBody model={m} fromCents={fromPerSecondCents(pricing, m.id)} money={money} />
+                <span className="model-try">
+                  Try {m.name}
+                  <Icon name="arrow" size={14} />
                 </span>
-                <span className="mock-time">0:30</span>
-              </div>
-              <div className="mock-footer">
-                <span>30s · 720p · 16:9</span>
-                <strong>{money(hero)}</strong>
-              </div>
-            </div>
+              </Link>
+            ))}
           </div>
         </section>
 
@@ -182,14 +292,28 @@ export function Landing() {
             <h2>Everything you need to go from words to video</h2>
             <p>Built for long scripts, big batches and consistent characters.</p>
           </header>
-          <div className="feature-grid">
+          <div className="bento">
             {FEATURES.map((feature) => (
-              <article key={feature.title} className="feature">
+              <article key={feature.title} className={feature.span ? `feature span-${feature.span}` : 'feature'}>
                 <span className="feature-icon">
                   <Icon name={feature.icon} size={20} />
                 </span>
                 <h3>{feature.title}</h3>
                 <p>{feature.body}</p>
+                {feature.icon === 'camera' && (
+                  <div className="feature-scenes" aria-hidden="true">
+                    <Scene camera="orbit" playing />
+                    <Scene camera="crash-zoom" look="noir" playing />
+                    <Scene camera="fpv" look="anime" playing />
+                  </div>
+                )}
+                {feature.icon === 'sparkles' && (
+                  <div className="feature-models" aria-hidden="true">
+                    {offered.slice(0, 12).map((m) => (
+                      <ModelMark key={m.id} model={m} size={30} />
+                    ))}
+                  </div>
+                )}
               </article>
             ))}
           </div>
@@ -213,7 +337,7 @@ export function Landing() {
         <section id="pricing" className="section">
           <header className="section-head">
             <h2>Simple, per-video pricing</h2>
-            <p>Buy credit once, spend it on any video. You always see the price before you generate.</p>
+            <p>Buy credit once, spend it on any model. You always see the price before you generate.</p>
           </header>
           <div className="pricing">
             <div className="price-card price-card-main">
@@ -257,13 +381,13 @@ export function Landing() {
           <div className="model-prices">
             <h3>Every model</h3>
             <ul>
-              {offered.map((model) => {
-                const from = fromPerSecondCents(pricing, model.id);
+              {offered.map((m) => {
+                const from = fromPerSecondCents(pricing, m.id);
                 return (
-                  <li key={model.id}>
+                  <li key={m.id}>
                     <span>
-                      <strong>{model.name}</strong>
-                      <small className="muted">{model.maker}</small>
+                      <strong>{m.name}</strong>
+                      <small className="muted">{m.maker}</small>
                     </span>
                     <span>{from !== undefined ? `from ${money(from)}/s` : '—'}</span>
                   </li>
@@ -288,6 +412,11 @@ export function Landing() {
         </section>
 
         <section className="section cta">
+          <div className="cta-scenes" aria-hidden="true">
+            <Scene camera="dolly-in" look="golden-hour" playing />
+            <Scene camera="pan-left" look="cyberpunk" playing />
+            <Scene camera="crane-up" look="fantasy" playing />
+          </div>
           <h2>Your first video is a prompt away</h2>
           <p>Sign up in seconds, add credit, and generate.</p>
           <Link to={start} className="button button-primary button-large">

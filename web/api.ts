@@ -13,6 +13,7 @@ import type {
   Pricing,
   PublicConfig,
   PublicUser,
+  ShowcaseItem,
   UploadResult,
 } from '../shared/types.ts';
 
@@ -56,6 +57,7 @@ const enc = encodeURIComponent;
 
 export const api = {
   config: () => request<PublicConfig>('/config'),
+  showcase: async () => (await request<{ items: ShowcaseItem[] }>('/showcase')).items,
 
   // accounts
   me: async () => (await request<{ user: PublicUser | null }>('/auth/me')).user,
@@ -126,6 +128,8 @@ export const api = {
     payments: async () => (await request<{ payments: PaymentRecord[] }>('/admin/payments')).payments,
     jobs: async () => (await request<{ jobs: AdminJobRow[] }>('/admin/jobs')).jobs,
     refund: (jobId: string) => request<{ refunded: boolean }>(`/admin/jobs/${enc(jobId)}/refund`, { method: 'POST' }),
+    /** Show one of the owner's own finished videos on the home page, or take it off. */
+    feature: (jobId: string, featured: boolean) => request<{ featured: boolean }>(`/admin/jobs/${enc(jobId)}/feature`, json('POST', { featured })),
     settings: () => request<{ pricing: Pricing; paymentProvider: string }>('/admin/settings'),
     saveSettings: (pricing: Pricing) => request<{ pricing: Pricing }>('/admin/settings', json('PUT', { pricing })),
   },

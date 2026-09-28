@@ -1,18 +1,21 @@
-/** The paid studio: pick a model, write prompts, add media, see the price, generate, and watch results. */
+/** The paid studio: a create panel (model, prompts, media, presets, price) beside a gallery of the customer's videos. */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { MODELS, endpointFor, inputLabel, modelById, qualityOf, type InputType } from '../../shared/models.ts';
+import { presetIn, type PresetFamily } from '../../shared/presets.ts';
 import { mediaCounts, perSecondCents, quote } from '../../shared/pricing.ts';
 import { countWords } from '../../shared/text.ts';
 import { ACTIVE_STATUSES } from '../../shared/types.ts';
 import { ApiError, api } from '../api.ts';
-import { buildRequest, countsOf, promptProblems, useComposer } from '../composer.ts';
+import { buildRequest, countsOf, promptProblems, takePendingPrompt, useComposer } from '../composer.ts';
 import { BuyCreditsDialog } from '../components/BuyCredits.tsx';
 import { SiteHeader } from '../components/Chrome.tsx';
+import { Gallery, type JobActions } from '../components/Gallery.tsx';
 import { Icon } from '../components/Icon.tsx';
-import { JobsPanel, type JobActions } from '../components/JobsPanel.tsx';
+import { PresetPicker } from '../components/PresetPicker.tsx';
 import { PromptCard } from '../components/PromptCard.tsx';
-import { SettingsPanel } from '../components/SettingsPanel.tsx';
+import { ModelSection, OutputSettings } from '../components/SettingsPanel.tsx';
 import { SplitDialog } from '../components/SplitDialog.tsx';
+import { VideoViewer } from '../components/VideoViewer.tsx';
 import { formatNumber, plural } from '../format.ts';
 import { useJobs, useNow } from '../jobs.ts';
 import { navigate, useLocation } from '../router.tsx';
@@ -29,15 +32,19 @@ export function Studio() {
   const now = useNow(jobs.hasActive);
   const { query } = useLocation();
   const [splitId, setSplitId] = useState<string>();
+  const [preset, setPreset] = useState<{ promptId: string; family: PresetFamily }>();
+  const [viewing, setViewing] = useState<string>();
   const [showProblems, setShowProblems] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [buying, setBuying] = useState(false);
   const [tab, setTab] = useState<'create' | 'jobs'>('create');
   const importInput = useRef<HTMLInputElement>(null);
+  const createScroll = useRef<HTMLDivElement>(null);
   const refreshJobs = jobs.refresh;
   const enabled = config.generationEnabled;
   const balance = user.balanceCents;
   const activeCount = jobs.jobs.filter((job) => ACTIVE_STATUSES.includes(job.status)).length;
+  const draftReady = draft !== undefined;
 
   // Back from Stripe checkout: confirm the payment, then tidy the URL.
   const paymentState = query.get('payment');
@@ -73,9 +80,25 @@ export function Studio() {
     };
   }, [paymentState, sessionId, setUser, notify]);
 
+  // From the home page: a model to try (/app?model=…) and a prompt typed before signing up.
+  const disabledModels = config.pricing.disabledModels;
+  const wantedModel = query.get('model');
+  useEffect(() => {
+    if (!draftReady || !wantedModel) return;
+    const model = modelById(wantedModel);
+    if (model && !disabledModels.includes(model.id)) actions.setSettings({ model: model.id });
+    navigate('/app', { replace: true });
+  }, [draftReady, wantedModel, disabledModels, actions]);
+  useEffect(() => {
+    if (!draftReady) return;
+    const text = takePendingPrompt();
+    if (!text) return;
+    actions.addPromptText(text);
+    notify('Your prompt is ready. Check the settings and press Generate.', 'success');
+  }, [draftReady, actions, notify]);
+
   // If the owner stops offering the chosen model, move to one that is offered.
   const chosenModel = draft?.settings.model;
-  const disabledModels = config.pricing.disabledModels;
   useEffect(() => {
     if (!chosenModel || !disabledModels.includes(chosenModel)) return;
     const next = MODELS.find((m) => !disabledModels.includes(m.id));
@@ -124,6 +147,11 @@ export function Studio() {
   const affordable = total <= balance;
   const tooMany = (stats?.count ?? 0) > config.limits.maxPromptsPerRequest;
 
+  const showPrompt = useCallback((id: string) => {
+    setTab('create');
+    requestAnimationFrame(() => document.getElementById(`prompt-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+  }, []);
+
   const generate = useCallback(async () => {
     if (!draft || !stats || submitting) return;
     if (!enabled) {
@@ -136,8 +164,7 @@ export function Studio() {
     }
     if (stats.problems.length > 0) {
       setShowProblems(true);
-      setTab('create');
-      document.getElementById(`prompt-${stats.problems[0]!.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      showPrompt(stats.problems[0]!.id);
       notify(`${plural(stats.problems.length, 'prompt needs', 'prompts need')} attention first`, 'error');
       return;
     }
@@ -217,7 +244,7 @@ export function Studio() {
     } finally {
       setSubmitting(false);
     }
-  }, [draft, stats, submitting, enabled, tooMany, affordable, total, balance, model, quality, rate, samePrice, money, config.limits, confirm, notify, setUser, refreshJobs, refreshConfig, refreshUser]);
+  }, [draft, stats, submitting, enabled, tooMany, affordable, total, balance, model, quality, rate, samePrice, money, config.limits, confirm, notify, setUser, refreshJobs, refreshConfig, refreshUser, showPrompt]);
 
   // Stable handler for the memoized prompt cards; always runs the latest generate().
   const generateRef = useRef(generate);
@@ -225,6 +252,7 @@ export function Studio() {
     generateRef.current = generate;
   }, [generate]);
   const onGenerate = useCallback(() => void generateRef.current(), []);
+  const onPreset = useCallback((promptId: string, family: PresetFamily) => setPreset({ promptId, family }), []);
 
   const jobList = jobs.jobs;
   const jobActions: JobActions = useMemo(() => {
@@ -244,7 +272,18 @@ export function Studio() {
           setUser(result.user);
         }, 'Canceled and refunded'),
       refresh: (id) => attempt(() => api.refresh(id)),
-      remove: (id) => attempt(() => api.remove(id)),
+      remove: async (id) => {
+        const job = jobList.find((j) => j.id === id);
+        const ok = await confirm({
+          title: 'Delete this video?',
+          body: <p>It is removed from My videos.{job?.status === 'completed' ? ' Download it first if you want to keep a copy.' : ''}</p>,
+          confirmLabel: 'Delete',
+          danger: true,
+        });
+        if (!ok) return;
+        setViewing((current) => (current === id ? undefined : current));
+        await attempt(() => api.remove(id), 'Deleted');
+      },
       retry: async (id) => {
         const job = jobList.find((j) => j.id === id);
         if (!job) return;
@@ -267,7 +306,9 @@ export function Studio() {
       reuse: async (id) => {
         try {
           actions.loadJob(await api.job(id));
+          setViewing(undefined);
           setTab('create');
+          createScroll.current?.scrollTo({ top: 0, behavior: 'smooth' });
           window.scrollTo({ top: 0, behavior: 'smooth' });
         } catch (error) {
           notify((error as Error).message, 'error');
@@ -289,13 +330,32 @@ export function Studio() {
           notify('Could not copy to the clipboard', 'error');
         }
       },
+      ...(user.isAdmin
+        ? {
+            feature: (id: string, featured: boolean) =>
+              attempt(() => api.admin.feature(id, featured), featured ? 'Now showing on the home page' : 'Removed from the home page'),
+          }
+        : {}),
     };
-  }, [actions, confirm, notify, refreshJobs, setUser, jobList, config.pricing, money]);
+  }, [actions, confirm, notify, refreshJobs, setUser, jobList, config.pricing, money, user.isAdmin]);
 
+  const onInspire = useCallback(
+    (text: string) => {
+      actions.addPromptText(text);
+      setTab('create');
+      notify('Example added to your prompts. Edit it, then press Generate.', 'success');
+    },
+    [actions, notify],
+  );
+
+  const viewingIndex = viewing ? jobList.findIndex((job) => job.id === viewing) : -1;
+  const viewingJob = viewingIndex >= 0 ? jobList[viewingIndex] : undefined;
+  const neighbors = { previous: jobList[viewingIndex - 1]?.id, next: viewingIndex >= 0 ? jobList[viewingIndex + 1]?.id : undefined };
   const splitPrompt = draft?.prompts.find((p) => p.id === splitId);
+  const presetPrompt = draft?.prompts.find((p) => p.id === preset?.promptId);
 
   return (
-    <div className="app">
+    <div className="app app-studio">
       <SiteHeader running={activeCount} />
 
       <nav className="tabs" aria-label="Sections">
@@ -310,126 +370,159 @@ export function Studio() {
         </button>
       </nav>
 
-      <main className="layout" data-tab={tab}>
-        <section className="pane pane-create" aria-label="Create videos">
-          {!enabled && (
-            <div className="banner banner-warning">
-              <Icon name="alert" size={16} />
-              <div>
-                <strong>Video generation is temporarily unavailable.</strong>
-                <p>
-                  You can still write and save prompts; your draft is kept on this device.
-                  {user.isAdmin && ' (Admin: set HF_CREDENTIALS on the server and restart it.)'}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {!draft || !stats ? (
-            <div className="card loading">
-              <span className="spinner" /> Loading your draft…
-            </div>
-          ) : (
-            <>
-              <SettingsPanel
-                settings={draft.settings}
-                onChange={actions.setSettings}
-                pricing={config.pricing}
-                money={money}
-                hint={rate !== undefined ? `${money(rate)} per second of video` : 'Not available right now'}
-              />
-
-              <div className="prompts-toolbar">
-                <h2>
-                  Prompts <span className="count">{formatNumber(stats.count)}</span>
-                </h2>
-                <div className="toolbar-actions">
-                  <button type="button" className="button button-small button-ghost" onClick={() => importInput.current?.click()}>
-                    <Icon name="file" size={16} />
-                    Import .txt files
-                  </button>
-                  <button type="button" className="button button-small button-ghost" onClick={actions.clearAll}>
-                    <Icon name="trash" size={16} />
-                    Clear all
-                  </button>
-                  <input
-                    ref={importInput}
-                    type="file"
-                    hidden
-                    multiple
-                    accept=".txt,.md,.markdown,.fountain,text/plain,text/markdown"
-                    onChange={(e) => {
-                      const files = [...(e.target.files ?? [])];
-                      e.target.value = '';
-                      if (files.length > 0) void actions.importTextFiles(files);
-                    }}
-                  />
+      <div className="studio" data-tab={tab}>
+        <section className="create-panel" aria-label="Create videos">
+          <div className="create-scroll" ref={createScroll}>
+            {!enabled && (
+              <div className="banner banner-warning">
+                <Icon name="alert" size={16} />
+                <div>
+                  <strong>Video generation is temporarily unavailable.</strong>
+                  <p>
+                    You can still write and save prompts; your draft is kept on this device.
+                    {user.isAdmin && ' (Admin: set HF_CREDENTIALS on the server and restart it.)'}
+                  </p>
                 </div>
               </div>
+            )}
 
-              <div className="prompt-list">
-                {draft.prompts.map((prompt, index) => (
-                  <PromptCard
-                    key={prompt.id}
-                    prompt={prompt}
-                    index={index}
-                    settings={draft.settings}
-                    price={stats.prices.has(prompt.id) ? money(stats.prices.get(prompt.id)!) : undefined}
-                    showProblems={showProblems}
-                    uploadsEnabled={enabled}
-                    actions={actions}
-                    onSplit={setSplitId}
-                    onGenerate={onGenerate}
-                  />
-                ))}
+            {!draft || !stats ? (
+              <div className="loading">
+                <span className="spinner" /> Loading your draft…
               </div>
+            ) : (
+              <>
+                <ModelSection
+                  settings={draft.settings}
+                  onChange={actions.setSettings}
+                  pricing={config.pricing}
+                  money={money}
+                  hint={rate !== undefined ? `${money(rate)} per second of video` : 'Not available right now'}
+                />
 
-              <button type="button" className="add-prompt" onClick={actions.addPrompt}>
-                <Icon name="plus" />
-                Add another prompt
-              </button>
-
-              <footer className="composer-footer">
-                <div className="footer-summary">
-                  <strong>
-                    {samePrice ? `${plural(stats.count, 'video')} × ${money(total / stats.count)} = ${money(total)}` : `${plural(stats.count, 'video')} = ${money(total)}`}
-                  </strong>
-                  <span className="muted">
-                    {model?.name} · {quality?.label} · {formatNumber(stats.seconds)} s billed · balance {money(balance)}
-                    {saveFailed ? ' · draft too large to autosave' : ''}
-                  </span>
-                  {showProblems && stats.problems.length > 0 && (
-                    <button
-                      type="button"
-                      className="link-button is-danger"
-                      onClick={() => document.getElementById(`prompt-${stats.problems[0]!.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
-                    >
-                      <Icon name="alert" size={14} />
-                      {plural(stats.problems.length, 'prompt needs', 'prompts need')} attention
+                <div className="prompts-toolbar">
+                  <h2>
+                    {stats.count === 1 ? 'Prompt' : 'Prompts'}
+                    {stats.count > 1 && <span className="count">{formatNumber(stats.count)}</span>}
+                  </h2>
+                  <div className="toolbar-actions">
+                    <button type="button" className="button button-small button-ghost" onClick={() => importInput.current?.click()} title="Each file becomes a prompt">
+                      <Icon name="file" size={15} />
+                      Import .txt
                     </button>
-                  )}
+                    <button type="button" className="button button-small button-ghost" onClick={actions.clearAll}>
+                      <Icon name="trash" size={15} />
+                      Clear all
+                    </button>
+                    <input
+                      ref={importInput}
+                      type="file"
+                      hidden
+                      multiple
+                      accept=".txt,.md,.markdown,.fountain,text/plain,text/markdown"
+                      onChange={(e) => {
+                        const files = [...(e.target.files ?? [])];
+                        e.target.value = '';
+                        if (files.length > 0) void actions.importTextFiles(files);
+                      }}
+                    />
+                  </div>
                 </div>
-                {affordable || !enabled ? (
-                  <button type="button" className="button button-primary button-large" disabled={!enabled || submitting || tooMany} onClick={() => void generate()}>
-                    {submitting ? <span className="spinner" /> : <Icon name="play" size={16} />}
-                    {submitting ? 'Starting…' : `Generate ${stats.count === 1 ? 'video' : `${formatNumber(stats.count)} videos`} · ${money(total)}`}
-                  </button>
-                ) : (
-                  <button type="button" className="button button-primary button-large" onClick={() => setBuying(true)}>
-                    <Icon name="wallet" size={16} />
-                    Add {money(total - balance)} credit to generate
+
+                <div className="prompt-list">
+                  {draft.prompts.map((prompt, index) => (
+                    <PromptCard
+                      key={prompt.id}
+                      prompt={prompt}
+                      index={index}
+                      total={stats.count}
+                      settings={draft.settings}
+                      price={stats.prices.has(prompt.id) ? money(stats.prices.get(prompt.id)!) : undefined}
+                      showProblems={showProblems}
+                      uploadsEnabled={enabled}
+                      actions={actions}
+                      onSplit={setSplitId}
+                      onPreset={onPreset}
+                      onGenerate={onGenerate}
+                    />
+                  ))}
+                </div>
+
+                <button type="button" className="add-prompt" onClick={actions.addPrompt}>
+                  <Icon name="plus" size={16} />
+                  Add another prompt
+                  <span className="muted">· one video each</span>
+                </button>
+              </>
+            )}
+          </div>
+
+          {draft && stats && (
+            <footer className="composer-footer">
+              <OutputSettings settings={draft.settings} onChange={actions.setSettings} pricing={config.pricing} money={money} />
+              <div className="footer-summary">
+                <strong>
+                  {samePrice ? `${plural(stats.count, 'video')} × ${money(total / stats.count)} = ${money(total)}` : `${plural(stats.count, 'video')} = ${money(total)}`}
+                </strong>
+                <span className="muted">
+                  {model?.name} · {quality?.label} · {formatNumber(stats.seconds)} s billed · balance {money(balance)}
+                  {saveFailed ? ' · draft too large to autosave' : ''}
+                </span>
+                {showProblems && stats.problems.length > 0 && (
+                  <button type="button" className="link-button is-danger" onClick={() => showPrompt(stats.problems[0]!.id)}>
+                    <Icon name="alert" size={14} />
+                    {plural(stats.problems.length, 'prompt needs', 'prompts need')} attention
                   </button>
                 )}
-              </footer>
-            </>
+              </div>
+              {affordable || !enabled ? (
+                <button type="button" className="button button-primary button-generate" disabled={!enabled || submitting || tooMany} onClick={() => void generate()}>
+                  {submitting ? <span className="spinner" /> : <Icon name="sparkles" size={18} />}
+                  {submitting ? 'Starting…' : `Generate ${stats.count === 1 ? 'video' : `${formatNumber(stats.count)} videos`} · ${money(total)}`}
+                </button>
+              ) : (
+                <button type="button" className="button button-primary button-generate" onClick={() => setBuying(true)}>
+                  <Icon name="wallet" size={18} />
+                  Add {money(total - balance)} credit to generate
+                </button>
+              )}
+            </footer>
           )}
         </section>
 
-        <aside className="pane pane-jobs" aria-label="My videos">
-          <JobsPanel jobs={jobs.jobs} loaded={jobs.loaded} error={jobs.error} now={now} actions={jobActions} money={money} />
-        </aside>
-      </main>
+        <section className="gallery-pane" aria-label="My videos">
+          <Gallery
+            jobs={jobs.jobs}
+            loaded={jobs.loaded}
+            error={jobs.error}
+            now={now}
+            actions={jobActions}
+            money={money}
+            onOpen={setViewing}
+            onInspire={onInspire}
+          />
+        </section>
+      </div>
 
+      <VideoViewer
+        job={viewingJob}
+        neighbors={neighbors}
+        now={now}
+        actions={jobActions}
+        money={money}
+        onNavigate={setViewing}
+        onClose={() => setViewing(undefined)}
+      />
+      <PresetPicker
+        family={preset && presetPrompt ? preset.family : undefined}
+        current={preset && presetPrompt ? presetIn(presetPrompt.text, preset.family)?.id : undefined}
+        prompts={stats?.count ?? 1}
+        onClose={() => setPreset(undefined)}
+        onPick={(chosen, everyPrompt) => {
+          if (preset) actions.setPreset(everyPrompt ? undefined : preset.promptId, preset.family, chosen);
+          setPreset(undefined);
+        }}
+      />
       <SplitDialog
         prompt={splitPrompt}
         duration={draft?.settings.duration ?? 5}
