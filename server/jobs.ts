@@ -7,9 +7,10 @@
  * submissions pause and jobs wait in line instead of failing, so topping up resumes the queue.
  */
 import { randomUUID } from 'node:crypto';
-import { videoPriceCents } from '../shared/pricing.ts';
+import { DEFAULT_MODEL } from '../shared/models.ts';
+import { mediaCounts, quote } from '../shared/pricing.ts';
 import { countWords, shorten } from '../shared/text.ts';
-import type { AdminJobRow, CreateJobsRequest, Job, JobStatus, JobSummary, ServiceStatus } from '../shared/types.ts';
+import type { AdminJobRow, CreateJobsRequest, GenerationSettings, Job, JobStatus, JobSummary, MediaInput, ServiceStatus } from '../shared/types.ts';
 import type { Billing } from './billing.ts';
 import { nowIso, type DB } from './db.ts';
 import { HiggsfieldError, type HiggsfieldApi, type RemoteStatus } from './higgsfield.ts';
@@ -45,6 +46,18 @@ export interface JobRow {
   finished_at: string | null;
 }
 
+/** Jobs from before other models existed stored Seedance 2.5's resolution instead of a model and quality. */
+function storedSettings(raw: string): GenerationSettings {
+  const s = JSON.parse(raw) as Partial<GenerationSettings> & { resolution?: string };
+  return {
+    model: s.model ?? DEFAULT_MODEL,
+    quality: s.quality ?? s.resolution ?? '720p',
+    duration: s.duration ?? 5,
+    aspectRatio: s.aspectRatio ?? '16:9',
+    generateAudio: s.generateAudio ?? true,
+  };
+}
+
 function toJob(row: JobRow): Job {
   return {
     id: row.id,
@@ -55,7 +68,7 @@ function toJob(row: JobRow): Job {
     prompt: row.prompt,
     promptPreview: row.prompt_preview,
     wordCount: row.word_count,
-    settings: JSON.parse(row.settings),
+    settings: storedSettings(row.settings),
     media: JSON.parse(row.media),
     endpoint: row.endpoint,
     status: row.status,
@@ -100,7 +113,7 @@ const REFUND_NOTE: Record<'failed' | 'nsfw' | 'canceled' | 'error', string> = {
 function describeInput(input: Record<string, unknown>): string {
   return Object.entries(input)
     .filter(([key]) => key !== 'prompt')
-    .map(([key, value]) => `${key}=${Array.isArray(value) ? `${value.length} image(s)` : typeof value === 'string' && /^https?:/i.test(value) ? 'set' : String(value)}`)
+    .map(([key, value]) => `${key}=${Array.isArray(value) ? `${value.length} item(s)` : typeof value === 'string' && /^https?:/i.test(value) ? 'set' : String(value)}`)
     .join(' ');
 }
 
@@ -251,16 +264,45 @@ export class JobRunner {
     return { paused: false };
   }
 
-  /** Charge the customer and queue the videos, all or nothing. */
-  enqueue(userId: string, request: CreateJobsRequest, expectedPriceCents?: number): Job[] {
+  /** Adds the lengths the server measured for this customer's uploaded videos (prices depend on them). */
+  private measured(userId: string, media: MediaInput): MediaInput {
+    const lookup = this.db.prepare<[string, string], { seconds: number | null }>("SELECT seconds FROM uploads WHERE url = ? AND user_id = ? AND kind = 'video'");
+    const seconds = (url: string) => {
+      const found = lookup.get(url, userId)?.seconds;
+      if (found === undefined || found === null) throw new HttpProblem(400, 'Upload videos on this site so their length (and price) can be worked out.');
+      return found;
+    };
+    const { sourceVideoSeconds: _s, referenceVideoSeconds: _r, ...rest } = media;
+    return {
+      ...rest,
+      ...(media.sourceVideoUrl ? { sourceVideoSeconds: seconds(media.sourceVideoUrl) } : {}),
+      ...(media.referenceVideoUrls?.length ? { referenceVideoSeconds: media.referenceVideoUrls.map(seconds) } : {}),
+    };
+  }
+
+  /**
+   * Charge the customer and queue the videos, all or nothing. `expected` is what the page showed
+   * (the batch total, or the per-video price from older pages); a different price is refused.
+   */
+  enqueue(userId: string, request: CreateJobsRequest, expected: { totalCents?: number; perVideoCents?: number } = {}): Job[] {
     if (!this.api) throw new HttpProblem(503, 'Video generation is not available right now.');
-    const price = videoPriceCents(request.settings, this.billing.pricing());
-    if (expectedPriceCents !== undefined && expectedPriceCents !== price) {
+    const pricing = this.billing.pricing();
+    const priced = request.prompts.map((p, i) => {
+      const media = this.measured(userId, p.media);
+      const q = quote(pricing, request.settings, mediaCounts(media), p.prompt);
+      if (q.cents === undefined || q.problems.length > 0) throw new HttpProblem(400, `Prompt ${i + 1}: ${q.problems[0] ?? 'this can’t be made'}`);
+      return { ...p, media, priceCents: q.cents };
+    });
+    const total = priced.reduce((sum, p) => sum + p.priceCents, 0);
+    if (
+      (expected.totalCents !== undefined && expected.totalCents !== total) ||
+      (expected.perVideoCents !== undefined && priced.some((p) => p.priceCents !== expected.perVideoCents))
+    ) {
       throw new HttpProblem(409, 'Prices have changed. Please review the new price and try again.');
     }
     const batchId = randomUUID();
     const createdAt = nowIso();
-    const jobs = request.prompts.map((p, batchIndex): Job => ({
+    const jobs = priced.map((p, batchIndex): Job => ({
       id: randomUUID(),
       batchId,
       batchIndex,
@@ -273,7 +315,7 @@ export class JobRunner {
       media: p.media,
       endpoint: toHiggsfieldRequest(p.prompt, request.settings, p.media).endpoint,
       status: 'pending',
-      priceCents: price,
+      priceCents: p.priceCents,
       refunded: false,
       createdAt,
       updatedAt: createdAt,
@@ -291,12 +333,12 @@ export class JobRunner {
     return jobs;
   }
 
-  /** A new video with the same prompt, images and settings (charged again). */
+  /** A new video with the same prompt, media and settings (charged again, at today's price). */
   retry(id: string, userId: string, expectedPriceCents?: number): Job {
     const row = this.store.owned(id, userId);
     if (ACTIVE.includes(row.status)) throw new HttpProblem(409, 'This video is still being made');
     const job = toJob(row);
-    return this.enqueue(userId, { settings: job.settings, prompts: [{ title: job.title, prompt: job.prompt, media: job.media }] }, expectedPriceCents)[0]!;
+    return this.enqueue(userId, { settings: job.settings, prompts: [{ title: job.title, prompt: job.prompt, media: job.media }] }, { totalCents: expectedPriceCents })[0]!;
   }
 
   async cancel(id: string, userId: string): Promise<JobRow> {
@@ -360,7 +402,15 @@ export class JobRunner {
 
   private async submit(row: JobRow): Promise<void> {
     const job = toJob(row);
-    const { endpoint, input } = toHiggsfieldRequest(job.prompt, job.settings, job.media);
+    let request: ReturnType<typeof toHiggsfieldRequest>;
+    try {
+      request = toHiggsfieldRequest(job.prompt, job.settings, job.media);
+    } catch (error) {
+      // The model's options changed since this job was queued (e.g. after an update).
+      this.end(row, 'error', 'These settings are no longer available for this model.', (error as Error).message);
+      return;
+    }
+    const { endpoint, input } = request;
     try {
       const accepted = await this.api!.submit(endpoint, input);
       this.store.update(row, {

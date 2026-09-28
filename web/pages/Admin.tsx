@@ -1,7 +1,6 @@
 /** Owner dashboard: sales, customers, credit adjustments, all videos with refunds, payments and pricing. */
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { RESOLUTIONS } from '../../shared/options.ts';
-import { videoPriceCents } from '../../shared/pricing.ts';
+import { MODELS, modelById, qualityOf } from '../../shared/models.ts';
 import {
   ACTIVE_STATUSES,
   type AdminJobRow,
@@ -297,6 +296,12 @@ function Customers() {
   );
 }
 
+const modelLabel = (job: AdminJobRow) => {
+  const model = modelById(job.settings.model);
+  const quality = model ? qualityOf(model, job.settings.quality) : undefined;
+  return `${model?.name ?? job.settings.model} ${quality?.label ?? job.settings.quality}`;
+};
+
 function Videos() {
   const { money } = useSession();
   const { notify, confirm } = useUi();
@@ -367,7 +372,7 @@ function Videos() {
                       {job.title ?? job.promptPreview}
                     </strong>
                     <span className="cell-sub">
-                      {formatDate(job.createdAt)} · {job.settings.duration}s · {job.settings.resolution} · {job.media.mode}
+                      {formatDate(job.createdAt)} · {modelLabel(job)} · {job.media.mode}
                       {job.requestId && (
                         <>
                           {' · '}
@@ -444,11 +449,13 @@ function Payments() {
 const toUnits = (cents: number) => (cents / 100).toFixed(2);
 const toCents = (units: string) => Math.round(Number(units) * 100);
 
+type PriceForm = { prices: Record<string, Record<string, string>>; disabled: string[]; packs: string; bonus: string };
+
 function PricingForm() {
   const { money, refreshConfig } = useSession();
   const { notify } = useUi();
   const { data, error, reload } = useLoad(api.admin.settings);
-  const [form, setForm] = useState<{ '480p': string; '720p': string; packs: string; bonus: string }>();
+  const [form, setForm] = useState<PriceForm>();
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string>();
 
@@ -456,8 +463,8 @@ function PricingForm() {
     if (!data) return;
     const p = data.pricing;
     setForm({
-      '480p': toUnits(p.perSecondCents['480p']),
-      '720p': toUnits(p.perSecondCents['720p']),
+      prices: Object.fromEntries(MODELS.map((m) => [m.id, Object.fromEntries(m.qualities.map((q) => [q.id, toUnits(p.perSecond[m.id]?.[q.id] ?? 0)]))])),
+      disabled: p.disabledModels,
       packs: p.packsCents.map(toUnits).join(', '),
       bonus: toUnits(p.signupBonusCents),
     });
@@ -466,13 +473,20 @@ function PricingForm() {
   if (!data || !form) return <Loading error={error} />;
   const draft: Pricing = {
     currency: data.pricing.currency,
-    perSecondCents: { '480p': toCents(form['480p']), '720p': toCents(form['720p']) },
+    perSecond: Object.fromEntries(
+      Object.entries(form.prices).map(([model, qualities]) => [model, Object.fromEntries(Object.entries(qualities).map(([q, v]) => [q, toCents(v || '0')]))]),
+    ),
+    disabledModels: form.disabled,
     packsCents: form.packs
       .split(/[\s,]+/)
       .filter(Boolean)
       .map(toCents),
     signupBonusCents: toCents(form.bonus || '0'),
   };
+  const setPrice = (model: string, quality: string, value: string) =>
+    setForm({ ...form, prices: { ...form.prices, [model]: { ...form.prices[model], [quality]: value } } });
+  const toggle = (model: string, offered: boolean) =>
+    setForm({ ...form, disabled: offered ? form.disabled.filter((id) => id !== model) : [...form.disabled, model] });
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -491,25 +505,63 @@ function PricingForm() {
 
   return (
     <form className="card form pricing-form" onSubmit={(e) => void save(e)}>
+      <p className="hint">
+        Prices are per second of video, in {draft.currency}. Uploaded videos (edit, extend, motion, video references) add their length to the
+        seconds. The starting prices are rough estimates of about twice Higgsfield’s list price; check your actual cost per model in the
+        Higgsfield console before selling, and keep every price above it.
+      </p>
+      <div className="table-wrap">
+        <table className="table price-table">
+          <thead>
+            <tr>
+              <th>Offer</th>
+              <th>Model</th>
+              <th>Price per second by quality</th>
+            </tr>
+          </thead>
+          <tbody>
+            {MODELS.map((model) => {
+              const offered = !form.disabled.includes(model.id);
+              return (
+                <tr key={model.id} className={offered ? undefined : 'is-disabled'}>
+                  <td>
+                    <label className="switch" title={offered ? 'Shown to customers' : 'Hidden from customers'}>
+                      <input type="checkbox" role="switch" checked={offered} onChange={(e) => toggle(model.id, e.target.checked)} aria-label={`Offer ${model.name}`} />
+                      <span className="switch-track" aria-hidden="true" />
+                    </label>
+                  </td>
+                  <td>
+                    <strong>{model.name}</strong>
+                    <span className="cell-sub">{model.maker}</span>
+                  </td>
+                  <td>
+                    <div className="price-inputs">
+                      {model.qualities.map((q) => (
+                        <label key={q.id} className="price-input">
+                          <span>{q.label}</span>
+                          <input
+                            className="input"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            inputMode="decimal"
+                            value={form.prices[model.id]?.[q.id] ?? ''}
+                            onChange={(e) => setPrice(model.id, q.id, e.target.value)}
+                            aria-label={`${model.name} ${q.label} price per second`}
+                            required
+                          />
+                          <small className="hint">10 s = {money(10 * toCents(form.prices[model.id]?.[q.id] || '0'))}</small>
+                        </label>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
       <div className="form-grid">
-        {RESOLUTIONS.map((resolution) => (
-          <label key={resolution} className="form-field">
-            <span>
-              Price per second, {resolution} ({draft.currency})
-            </span>
-            <input
-              className="input"
-              type="number"
-              min="0"
-              step="0.01"
-              inputMode="decimal"
-              value={form[resolution]}
-              onChange={(e) => setForm({ ...form, [resolution]: e.target.value })}
-              required
-            />
-            <small className="hint">30-second video: {money(videoPriceCents({ duration: 30, resolution }, draft))}</small>
-          </label>
-        ))}
         <label className="form-field">
           <span>Credit packs ({draft.currency}, comma separated)</span>
           <input className="input" value={form.packs} onChange={(e) => setForm({ ...form, packs: e.target.value })} required />

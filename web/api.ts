@@ -13,6 +13,7 @@ import type {
   Pricing,
   PublicConfig,
   PublicUser,
+  UploadResult,
 } from '../shared/types.ts';
 
 export class ApiError extends Error {
@@ -75,13 +76,26 @@ export const api = {
     request<{ status: PaymentStatus; user: PublicUser }>('/billing/razorpay/confirm', json('POST', body)),
 
   // uploads and videos
-  upload: async (file: Blob) =>
-    (await request<{ url: string }>('/uploads', {
-      method: 'POST',
-      headers: { 'Content-Type': file.type || 'application/octet-stream' },
-      body: file,
-    })).url,
-  createJobs: (body: CreateJobsRequest & { expectedPriceCents: number }) =>
+  /** Uploads through this site to video storage; XHR so large videos can report progress. */
+  upload: (file: Blob, onProgress?: (fraction: number) => void) =>
+    new Promise<UploadResult>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/uploads');
+      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+      xhr.responseType = 'json';
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) onProgress?.(event.loaded / event.total);
+      };
+      xhr.onload = () => {
+        const body = xhr.response as (UploadResult & { error?: string }) | null;
+        if (xhr.status >= 200 && xhr.status < 300 && body?.url) return resolve(body);
+        if (xhr.status === 401) onUnauthorized?.();
+        reject(new ApiError(body?.error ?? `Upload failed (HTTP ${xhr.status})`, xhr.status));
+      };
+      xhr.onerror = () => reject(new ApiError('Upload failed. Check your connection and try again.', 0));
+      xhr.send(file);
+    }),
+  createJobs: (body: CreateJobsRequest & { expectedTotalCents: number }) =>
     request<{ jobs: JobSummary[]; user: PublicUser }>('/jobs', json('POST', body)),
   /** Job list with ETag revalidation: `jobs` is undefined when nothing changed. */
   jobs: async (etag?: string): Promise<{ etag?: string; jobs?: JobSummary[] }> => {

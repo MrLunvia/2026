@@ -5,7 +5,7 @@
  */
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import axios from 'axios';
-import { RESOLUTIONS } from '../shared/options.ts';
+import { MODELS, modelById } from '../shared/models.ts';
 import { formatMoney } from '../shared/pricing.ts';
 import type { CheckoutStart, LedgerEntry, LedgerKind, PaymentRecord, PaymentStatus, Pricing } from '../shared/types.ts';
 import type { UserRow } from './auth.ts';
@@ -147,12 +147,21 @@ export function createBilling(db: DB, config: PlatformConfig) {
     : undefined;
   const money = (cents: number) => formatMoney(cents, config.currency);
 
+  /** Model defaults, then env overrides, then what the admin saved (older saves priced Seedance 2.5 only). */
   function pricing(): Pricing {
     const saved = getSetting.get('pricing');
-    const stored = (saved ? JSON.parse(saved.value) : {}) as Partial<Pricing>;
+    const stored = (saved ? JSON.parse(saved.value) : {}) as Partial<Pricing> & { perSecondCents?: Record<string, number> };
+    const storedPerSecond = stored.perSecond ?? (stored.perSecondCents ? { 'seedance-2.5': stored.perSecondCents } : {});
+    const perSecond: Pricing['perSecond'] = {};
+    for (const model of MODELS) {
+      const merged = { ...model.defaultPrices, ...config.defaults.perSecond[model.id], ...storedPerSecond[model.id] };
+      // Only this model's qualities, so a renamed quality never lingers.
+      perSecond[model.id] = Object.fromEntries(model.qualities.map((q) => [q.id, merged[q.id] ?? 0]));
+    }
     return {
       currency: config.currency,
-      perSecondCents: { ...config.defaults.perSecondCents, ...(stored.perSecondCents ?? {}) },
+      perSecond,
+      disabledModels: (stored.disabledModels ?? []).filter((id) => modelById(id)),
       packsCents: stored.packsCents?.length ? stored.packsCents : config.defaults.packsCents,
       signupBonusCents: stored.signupBonusCents ?? config.defaults.signupBonusCents,
     };
@@ -166,15 +175,20 @@ export function createBilling(db: DB, config: PlatformConfig) {
       }
       return value;
     };
-    const perSecondCents = Object.fromEntries(
-      RESOLUTIONS.map((r) => [r, cents(body.perSecondCents?.[r], `Price per second at ${r}`, 0, 100_000)]),
-    ) as Pricing['perSecondCents'];
+    const perSecond: Pricing['perSecond'] = {};
+    for (const model of MODELS) {
+      perSecond[model.id] = Object.fromEntries(
+        model.qualities.map((q) => [q.id, cents(body.perSecond?.[model.id]?.[q.id], `${model.name} ${q.label} price per second`, 0, 100_000)]),
+      );
+    }
+    const disabledModels = Array.isArray(body.disabledModels) ? [...new Set(body.disabledModels.filter((id) => typeof id === 'string' && modelById(id)))] : [];
+    if (disabledModels.length === MODELS.length) throw new HttpProblem(400, 'Offer at least one model');
     if (!Array.isArray(body.packsCents) || body.packsCents.length === 0 || body.packsCents.length > 8) {
       throw new HttpProblem(400, 'Offer between 1 and 8 credit packs');
     }
     const packsCents = [...new Set(body.packsCents.map((pack) => cents(pack, 'Each credit pack', 100, 10_000_000)))].sort((a, b) => a - b);
     const signupBonusCents = cents(body.signupBonusCents ?? 0, 'Welcome credit', 0, 1_000_000);
-    putSetting.run('pricing', JSON.stringify({ perSecondCents, packsCents, signupBonusCents }));
+    putSetting.run('pricing', JSON.stringify({ perSecond, disabledModels, packsCents, signupBonusCents }));
     return pricing();
   }
 

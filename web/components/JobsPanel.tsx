@@ -1,4 +1,5 @@
 import { memo, useMemo, useState } from 'react';
+import { inputLabel, modelById, qualityOf, type InputType } from '../../shared/models.ts';
 import { ACTIVE_STATUSES, type JobStatus, type JobSummary } from '../../shared/types.ts';
 import { formatElapsed, formatNumber, plural, timeAgo } from '../format.ts';
 import { Icon, type IconName } from './Icon.tsx';
@@ -17,11 +18,26 @@ const STATUS: Record<JobStatus, { label: string; tone: Tone }> = {
   error: { label: 'Error', tone: 'danger' },
 };
 
-const MODE: Record<JobSummary['media']['mode'], { label: string; icon: IconName }> = {
-  text: { label: 'Text to video', icon: 'text' },
-  frames: { label: 'Image to video', icon: 'frames' },
-  references: { label: 'Reference to video', icon: 'layers' },
+const MODE_ICON: Record<InputType, IconName> = {
+  text: 'text',
+  frames: 'frames',
+  references: 'layers',
+  edit: 'scissors',
+  extend: 'arrow',
+  motion: 'user',
+  swap: 'refresh',
+  'video-reference': 'film',
 };
+
+/** "Kling 3.0 · Pro" for a job, falling back gracefully for models no longer offered. */
+function describeJob(job: JobSummary): { model: string; quality: string; mode: string } {
+  const model = modelById(job.settings.model);
+  return {
+    model: model?.name ?? job.settings.model,
+    quality: (model && qualityOf(model, job.settings.quality)?.label) ?? job.settings.quality,
+    mode: model ? inputLabel(model, job.media.mode) : job.media.mode,
+  };
+}
 
 type Filter = 'all' | 'active' | 'completed' | 'attention';
 const FILTERS: { id: Filter; label: string; test: (job: JobSummary) => boolean }[] = [
@@ -48,7 +64,7 @@ const JobCard = memo(function JobCard({ job, now, actions, money }: { job: JobSu
   const [fullPrompt, setFullPrompt] = useState<string>();
   const [expanded, setExpanded] = useState(false);
   const status = STATUS[job.status];
-  const mode = MODE[job.media.mode];
+  const about = describeJob(job);
   const active = ACTIVE_STATUSES.includes(job.status);
   const truncated = job.promptPreview.endsWith('…');
   const since = Date.parse(job.submittedAt ?? job.createdAt);
@@ -56,6 +72,8 @@ const JobCard = memo(function JobCard({ job, now, actions, money }: { job: JobSu
   const images = [job.media.startImageUrl, job.media.endImageUrl, ...(job.media.referenceImageUrls ?? [])].filter(
     (url): url is string => typeof url === 'string',
   );
+  const videoInputs = (job.media.sourceVideoUrl ? 1 : 0) + (job.media.referenceVideoUrls?.length ?? 0);
+  const audioInputs = (job.media.soundtrackUrl ? 1 : 0) + (job.media.referenceAudioUrls?.length ?? 0);
 
   const run = (name: string, action: () => Promise<void>) => async () => {
     setBusy(name);
@@ -88,8 +106,8 @@ const JobCard = memo(function JobCard({ job, now, actions, money }: { job: JobSu
           {status.label}
         </span>
         <span className="job-mode" title={job.endpoint}>
-          <Icon name={mode.icon} size={14} />
-          {mode.label}
+          <Icon name={MODE_ICON[job.media.mode] ?? 'film'} size={14} />
+          {about.mode}
         </span>
         {job.refunded && (
           <span className="badge badge-neutral" title={money ? `${money(job.priceCents)} returned to your balance` : undefined}>
@@ -132,10 +150,13 @@ const JobCard = memo(function JobCard({ job, now, actions, money }: { job: JobSu
       )}
 
       <div className="job-meta">
-        <span>{job.settings.duration}s</span>
-        <span>{job.settings.resolution}</span>
-        <span>{job.media.mode === 'frames' ? 'image framing' : job.settings.aspectRatio}</span>
-        <span>{job.settings.generateAudio ? 'audio' : 'no audio'}</span>
+        <span className="job-model">
+          {about.model} · {about.quality}
+        </span>
+        {!['edit', 'motion', 'swap'].includes(job.media.mode) && <span>{job.settings.duration}s</span>}
+        {job.media.mode === 'text' || job.media.mode === 'references' ? <span>{job.settings.aspectRatio === 'auto' ? 'auto ratio' : job.settings.aspectRatio}</span> : null}
+        {videoInputs > 0 && <span>{videoInputs === 1 ? '1 video in' : `${videoInputs} videos in`}</span>}
+        {audioInputs > 0 && <span>{audioInputs === 1 ? '1 audio in' : `${audioInputs} audio in`}</span>}
         {!active && job.finishedAt && <span>took {formatElapsed(elapsed)}</span>}
         {money && job.priceCents > 0 && <span className={job.refunded ? 'is-struck' : undefined}>{money(job.priceCents)}</span>}
       </div>

@@ -96,6 +96,19 @@ const MIGRATIONS: string[] = [
   `,
   // v2: who made a manual balance change (admin email), kept for the owner's records only.
   `ALTER TABLE ledger ADD COLUMN actor TEXT;`,
+  // v3: files customers uploaded, with the video lengths prices are based on.
+  `
+  CREATE TABLE uploads (
+    url TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    kind TEXT NOT NULL, -- image | video | audio
+    content_type TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    seconds REAL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX uploads_user ON uploads(user_id, created_at DESC);
+  `,
 ];
 
 export function openDatabase(file: string): DB {

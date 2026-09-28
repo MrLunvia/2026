@@ -1,7 +1,8 @@
 /** Log in, sign up, forgot password and reset password. */
 import { useState, type FormEvent } from 'react';
 import { LIMITS } from '../../shared/options.ts';
-import { videoPriceCents } from '../../shared/pricing.ts';
+import { MODELS } from '../../shared/models.ts';
+import { headlinePriceCents } from '../../shared/pricing.ts';
 import { api } from '../api.ts';
 import { Icon } from '../components/Icon.tsx';
 import { PublicHeader, SiteFooter } from '../components/Chrome.tsx';
@@ -68,7 +69,7 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
     }
   };
 
-  const hero = videoPriceCents({ duration: 30, resolution: '720p' }, config.pricing);
+  const hero = headlinePriceCents(config.pricing);
 
   return (
     <div className="site">
@@ -202,7 +203,7 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
             <li>
               <Icon name="film" size={18} />
               <span>
-                <strong>{money(hero)} per 30-second 720p video</strong> — pay per video, no subscription
+                <strong>{MODELS.length} top video models</strong> — {money(hero)} for a 30-second 720p Seedance 2.5 video, no subscription
               </span>
             </li>
             <li>

@@ -1,7 +1,8 @@
 /** Public home page: what the product does, what it costs, answers, and a way in. */
 import { useEffect } from 'react';
-import { LIMITS, MODEL_LABEL } from '../../shared/options.ts';
-import { videoPriceCents } from '../../shared/pricing.ts';
+import { MODELS } from '../../shared/models.ts';
+import { LIMITS } from '../../shared/options.ts';
+import { fromPerSecondCents, headlinePriceCents } from '../../shared/pricing.ts';
 import { Icon, type IconName } from '../components/Icon.tsx';
 import { PublicHeader, SiteFooter } from '../components/Chrome.tsx';
 import { formatNumber } from '../format.ts';
@@ -10,19 +11,24 @@ import { useSession } from '../session.tsx';
 
 const FEATURES: { icon: IconName; title: string; body: string }[] = [
   {
+    icon: 'sparkles',
+    title: `${MODELS.length} leading video models`,
+    body: 'Seedance, Kling, Wan, MiniMax, LTX, PixVerse, Grok Imagine, Happy Horse, Cinema Studio and Genjutsu, all in one studio.',
+  },
+  {
     icon: 'text',
     title: `Prompts up to ${formatNumber(LIMITS.promptWords)} words`,
     body: 'Paste a whole script. The scene splitter turns long stories into one video per scene, in order.',
   },
   {
     icon: 'image',
-    title: 'Your images, animated',
-    body: `Bring a start frame (and an end frame), or up to ${LIMITS.referenceImages} reference images for characters, products and style.`,
+    title: 'Your images and videos',
+    body: 'Animate a start frame, keep characters consistent with reference images, or edit, extend and transfer motion from your own videos.',
   },
   {
     icon: 'film',
-    title: '30-second 720p videos',
-    body: 'Cinematic clips from 4 to 30 seconds, in six aspect ratios from 21:9 to 9:16, with generated sound.',
+    title: 'Up to 30 seconds, up to 4K',
+    body: 'From quick 5-second clips to 30-second scenes, in every common aspect ratio, most with generated sound.',
   },
   {
     icon: 'layers',
@@ -43,7 +49,7 @@ const FEATURES: { icon: IconName; title: string; body: string }[] = [
 
 const STEPS: { title: string; body: string }[] = [
   { title: 'Write or paste', body: 'Describe the scene, paste a script, or import .txt files. Add images if you have them.' },
-  { title: 'Pick the format', body: 'Choose length, resolution, aspect ratio and sound. The price updates as you go.' },
+  { title: 'Pick a model and format', body: `Choose one of ${MODELS.length} models, then length, quality, aspect ratio and sound. The price updates as you go.` },
   { title: 'Generate and download', body: 'Watch progress live, then play, download or share each finished video.' },
 ];
 
@@ -58,14 +64,16 @@ export function Landing() {
 
   if (!config) return null;
   const { pricing, payments } = config;
-  const hero = videoPriceCents({ duration: 30, resolution: '720p' }, pricing);
+  const hero = headlinePriceCents(pricing);
   const start = user ? '/app' : '/signup';
-  const examples: { label: string; cents: number }[] = [
-    { label: '30 seconds · 720p', cents: hero },
-    { label: '15 seconds · 720p', cents: videoPriceCents({ duration: 15, resolution: '720p' }, pricing) },
-    { label: '30 seconds · 480p', cents: videoPriceCents({ duration: 30, resolution: '480p' }, pricing) },
-    { label: '5 seconds · 480p', cents: videoPriceCents({ duration: 5, resolution: '480p' }, pricing) },
-  ];
+  const offered = MODELS.filter((model) => !pricing.disabledModels.includes(model.id));
+  const rate = (model: string, quality: string) => pricing.perSecond[model]?.[quality] ?? 0;
+  const examples: { model: string; label: string; cents: number }[] = [
+    { model: 'seedance-2.5', label: 'Seedance 2.5 · 30 s · 720p', cents: hero },
+    { model: 'seedance-2.5', label: 'Seedance 2.5 · 30 s · 480p', cents: 30 * rate('seedance-2.5', '480p') },
+    { model: 'kling-3.0', label: 'Kling 3.0 · 10 s · Standard', cents: 10 * rate('kling-3.0', 'std') },
+    { model: 'wan-3.0', label: 'Wan 3.0 · 10 s · 1080p', cents: 10 * rate('wan-3.0', '1080p') },
+  ].filter((example) => example.cents > 0 && !pricing.disabledModels.includes(example.model));
   const payWith =
     payments.provider === 'stripe'
       ? 'By card, through Stripe’s secure checkout.'
@@ -75,7 +83,7 @@ export function Landing() {
   const faqs: { q: string; a: string }[] = [
     {
       q: 'How much does a video cost?',
-      a: `${money(hero)} for a 30-second 720p video. You pay per second of video: ${money(pricing.perSecondCents['720p'])} a second at 720p and ${money(pricing.perSecondCents['480p'])} at 480p. The exact total is shown before anything is charged.`,
+      a: `Each model has a price per second of video, and the studio shows the exact total before anything is charged. A 30-second 720p Seedance 2.5 video is ${money(hero)}. When you upload a video to edit, extend or copy motion from, its length counts toward the seconds too.`,
     },
     {
       q: 'What if a video fails?',
@@ -86,8 +94,8 @@ export function Landing() {
       a: 'Most videos are ready in a few minutes; long or busy batches take longer. You can close the page — your videos keep generating and wait for you under My videos.',
     },
     {
-      q: 'Can I use my own images?',
-      a: `Yes. Animate a start image (optionally toward an end image), or add up to ${LIMITS.referenceImages} reference images to keep a character, product or style consistent.`,
+      q: 'Can I use my own images and videos?',
+      a: 'Yes, depending on the model: animate a start (and end) frame, add reference images, videos or audio to keep a character, product or style consistent, edit or extend a video, transfer its motion to a new character, or swap objects in it.',
     },
     {
       q: 'What isn’t allowed?',
@@ -105,14 +113,14 @@ export function Landing() {
           <div className="hero-copy">
             <span className="eyebrow">
               <Icon name="sparkles" size={14} />
-              {MODEL_LABEL} · up to 30 seconds · 720p
+              {MODELS.length} video models · up to 30 seconds · up to 4K
             </span>
             <h1>
               Turn any script into a <span className="gradient-text">cinematic video</span>
             </h1>
             <p className="lead">
-              Write up to {formatNumber(LIMITS.promptWords)} words or start from your own images. {config.appName} turns it into a
-              30-second 720p video with sound — {money(hero)} per video, no subscription.
+              Write up to {formatNumber(LIMITS.promptWords)} words or start from your own images and videos, then pick from {MODELS.length} leading
+              models — Seedance, Kling, Wan and more. Pay per video, no subscription: a 30-second 720p Seedance 2.5 video is {money(hero)}.
             </p>
             <div className="hero-actions">
               <Link to={start} className="button button-primary button-large">
@@ -214,7 +222,7 @@ export function Landing() {
                 <strong>{money(hero)}</strong>
                 <span>per video</span>
               </div>
-              <p className="muted">30 seconds · 720p · sound included</p>
+              <p className="muted">Seedance 2.5 · 30 seconds · 720p · sound included</p>
               <ul className="price-list">
                 {examples.map((example) => (
                   <li key={example.label}>
@@ -229,14 +237,14 @@ export function Landing() {
             </div>
             <div className="price-card">
               <h3>Credit packs</h3>
-              <p className="muted">Credit never expires and works for any length or resolution.</p>
+              <p className="muted">Credit never expires and works with every model.</p>
               <ul className="price-list">
                 {pricing.packsCents.map((pack) => {
                   const videos = hero > 0 ? Math.floor(pack / hero) : 0;
                   return (
                     <li key={pack}>
                       <span>{money(pack)}</span>
-                      <strong>{videos > 0 ? `${videos} × 30s 720p video${videos === 1 ? '' : 's'}` : 'Credit'}</strong>
+                      <strong>{videos > 0 ? `${videos} × 30s Seedance 720p` : 'Credit'}</strong>
                     </li>
                   );
                 })}
@@ -245,6 +253,23 @@ export function Landing() {
                 <Icon name="lock" size={14} /> {payWith}
               </p>
             </div>
+          </div>
+          <div className="model-prices">
+            <h3>Every model</h3>
+            <ul>
+              {offered.map((model) => {
+                const from = fromPerSecondCents(pricing, model.id);
+                return (
+                  <li key={model.id}>
+                    <span>
+                      <strong>{model.name}</strong>
+                      <small className="muted">{model.maker}</small>
+                    </span>
+                    <span>{from !== undefined ? `from ${money(from)}/s` : '—'}</span>
+                  </li>
+                );
+              })}
+            </ul>
           </div>
         </section>
 

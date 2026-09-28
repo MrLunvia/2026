@@ -1,7 +1,9 @@
 import { memo, useMemo, useRef, type ClipboardEvent } from 'react';
+import { endpointFor } from '../../shared/models.ts';
 import { LIMITS } from '../../shared/options.ts';
 import { countWords } from '../../shared/text.ts';
-import { activeImages, promptProblems, type ComposerActions, type DraftPrompt } from '../composer.ts';
+import type { GenerationSettings } from '../../shared/types.ts';
+import { activeMedia, promptProblems, type ComposerActions, type DraftPrompt } from '../composer.ts';
 import { formatNumber } from '../format.ts';
 import { Icon } from './Icon.tsx';
 import { MediaSection } from './MediaSection.tsx';
@@ -13,6 +15,8 @@ const TEXT_ACCEPT = '.txt,.md,.markdown,.fountain,text/plain,text/markdown';
 export const PromptCard = memo(function PromptCard({
   prompt,
   index,
+  settings,
+  price,
   showProblems,
   uploadsEnabled,
   actions,
@@ -21,6 +25,9 @@ export const PromptCard = memo(function PromptCard({
 }: {
   prompt: DraftPrompt;
   index: number;
+  settings: GenerationSettings;
+  /** This prompt's price, formatted, when it can be made. */
+  price?: string;
   showProblems: boolean;
   uploadsEnabled: boolean;
   actions: ComposerActions;
@@ -28,21 +35,27 @@ export const PromptCard = memo(function PromptCard({
   onGenerate: () => void;
 }) {
   const words = useMemo(() => countWords(prompt.text), [prompt.text]);
-  const problems = useMemo(() => promptProblems(prompt, words), [prompt, words]);
+  const problems = useMemo(() => promptProblems(prompt, settings, words), [prompt, settings, words]);
   const fileInput = useRef<HTMLInputElement>(null);
   const over = words > LIMITS.promptWords;
-  const uploading = activeImages(prompt).some((image) => image.status === 'uploading');
+  const spec = endpointFor(settings, prompt.mode);
+  const uploading = activeMedia(prompt, spec).some((m) => m.status === 'uploading');
   const label = `Prompt ${index + 1}`;
 
+  // Pasted images go where this prompt takes images; a text prompt switches to references if it can.
   const onPaste = (event: ClipboardEvent) => {
     const files = [...event.clipboardData.files].filter((file) => file.type.startsWith('image/'));
     if (files.length === 0 || !uploadsEnabled) return;
-    event.preventDefault();
-    if (prompt.mode === 'frames') {
-      actions.addFiles(prompt.id, prompt.startImage ? 'end' : 'start', files);
-    } else {
-      if (prompt.mode === 'text') actions.changePrompt(prompt.id, { mode: 'references' });
+    if (spec?.start && (!prompt.start || (spec.end && !prompt.end))) {
+      event.preventDefault();
+      actions.addFiles(prompt.id, prompt.start ? 'end' : 'start', files);
+    } else if (spec?.images) {
+      event.preventDefault();
       actions.addFiles(prompt.id, 'references', files);
+    } else if (prompt.mode === 'text' && endpointFor(settings, 'references')?.images) {
+      event.preventDefault();
+      actions.changePrompt(prompt.id, { mode: 'references' });
+      actions.addFiles(prompt.id, 'references', files, 'references');
     }
   };
 
@@ -129,6 +142,7 @@ export const PromptCard = memo(function PromptCard({
           {formatNumber(words)} / {formatNumber(LIMITS.promptWords)} words
         </span>
         <span className="muted">{formatNumber(prompt.text.length)} characters</span>
+        {price && <span className="prompt-price">{price}</span>}
         {words > LONG_PROMPT_WORDS && (
           <button type="button" className="link-button" onClick={() => onSplit(prompt.id)} disabled={uploading}>
             <Icon name="scissors" size={14} />
@@ -137,7 +151,7 @@ export const PromptCard = memo(function PromptCard({
         )}
       </div>
 
-      <MediaSection prompt={prompt} actions={actions} uploadsEnabled={uploadsEnabled} />
+      <MediaSection prompt={prompt} settings={settings} actions={actions} uploadsEnabled={uploadsEnabled} />
 
       {(showProblems || over) && problems.length > 0 && (
         <ul className="problems">

@@ -12,7 +12,8 @@ export interface PlatformConfig {
   adminEmails: Set<string>;
   currency: string;
   defaults: {
-    perSecondCents: { '480p': number; '720p': number };
+    /** Env overrides of model prices (PRICE_PER_SECOND_480P/720P set Seedance 2.5's). */
+    perSecond: Record<string, Record<string, number>>;
     packsCents: number[];
     signupBonusCents: number;
   };
@@ -92,8 +93,8 @@ export function loadConfig(env: NodeJS.ProcessEnv, root: string): PlatformConfig
     ),
     currency: (trimmed('CURRENCY') ?? 'USD').toUpperCase(),
     defaults: {
-      // 720p at 0.40/second makes a 30-second video 12.00.
-      perSecondCents: { '480p': money(env.PRICE_PER_SECOND_480P, 30), '720p': money(env.PRICE_PER_SECOND_720P, 40) },
+      // Seedance 2.5 at 0.40/second makes a 30-second 720p video 12.00.
+      perSecond: { 'seedance-2.5': { '480p': money(env.PRICE_PER_SECOND_480P, 30), '720p': money(env.PRICE_PER_SECOND_720P, 40) } },
       packsCents: packs.length > 0 ? packs : [1200],
       signupBonusCents: money(env.SIGNUP_BONUS, 0),
     },

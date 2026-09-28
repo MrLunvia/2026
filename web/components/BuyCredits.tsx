@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { videoPriceCents } from '../../shared/pricing.ts';
+import { headlinePriceCents } from '../../shared/pricing.ts';
 import type { CheckoutStart, PublicUser } from '../../shared/types.ts';
 import { api } from '../api.ts';
 import { useSession } from '../session.tsx';
@@ -57,7 +57,7 @@ export function BuyCreditsDialog({ open, onClose }: { open: boolean; onClose: ()
   const { notify } = useUi();
   const [busy, setBusy] = useState<number>();
   if (!config || !user) return null;
-  const perVideo = videoPriceCents({ duration: 30, resolution: '720p' }, config.pricing);
+  const perVideo = headlinePriceCents(config.pricing);
   const provider = config.payments.provider;
 
   const buy = async (packCents: number) => {
@@ -89,7 +89,7 @@ export function BuyCreditsDialog({ open, onClose }: { open: boolean; onClose: ()
   return (
     <Dialog open={open} wide title="Buy credit" onClose={onClose}>
       <p className="dialog-lead">
-        Pay once, use any time: credit never expires. A 30-second 720p video costs {money(perVideo)}. Videos that fail or are blocked
+        Pay once, use any time: credit never expires and works with every model. A 30-second 720p Seedance 2.5 video costs {money(perVideo)}; the studio shows each price before you generate. Videos that fail or are blocked
         are refunded to your balance automatically.
       </p>
       {provider === 'manual' ? (
@@ -107,7 +107,7 @@ export function BuyCreditsDialog({ open, onClose }: { open: boolean; onClose: ()
             return (
               <button key={pack} type="button" className="pack" disabled={busy !== undefined} onClick={() => void buy(pack)}>
                 <span className="pack-amount">{money(pack)}</span>
-                <span className="pack-videos">{videos > 0 ? `${videos} × 30-second video${videos === 1 ? '' : 's'}` : 'Credit'}</span>
+                <span className="pack-videos">{videos > 0 ? `${videos} × 30s Seedance 720p` : 'Credit'}</span>
                 <span className="button button-primary button-small">{busy === pack ? <span className="spinner" /> : 'Buy'}</span>
               </button>
             );

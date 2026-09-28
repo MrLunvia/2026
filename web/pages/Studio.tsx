@@ -1,11 +1,11 @@
-/** The paid studio: write prompts, add images, see the price, generate, and watch results. */
+/** The paid studio: pick a model, write prompts, add media, see the price, generate, and watch results. */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { MODEL_LABEL } from '../../shared/options.ts';
-import { videoPriceCents } from '../../shared/pricing.ts';
+import { MODELS, endpointFor, inputLabel, modelById, qualityOf, type InputType } from '../../shared/models.ts';
+import { mediaCounts, perSecondCents, quote } from '../../shared/pricing.ts';
 import { countWords } from '../../shared/text.ts';
 import { ACTIVE_STATUSES } from '../../shared/types.ts';
 import { ApiError, api } from '../api.ts';
-import { buildRequest, promptProblems, useComposer } from '../composer.ts';
+import { buildRequest, countsOf, promptProblems, useComposer } from '../composer.ts';
 import { BuyCreditsDialog } from '../components/BuyCredits.tsx';
 import { SiteHeader } from '../components/Chrome.tsx';
 import { Icon } from '../components/Icon.tsx';
@@ -13,7 +13,7 @@ import { JobsPanel, type JobActions } from '../components/JobsPanel.tsx';
 import { PromptCard } from '../components/PromptCard.tsx';
 import { SettingsPanel } from '../components/SettingsPanel.tsx';
 import { SplitDialog } from '../components/SplitDialog.tsx';
-import { formatElapsed, formatNumber, plural } from '../format.ts';
+import { formatNumber, plural } from '../format.ts';
 import { useJobs, useNow } from '../jobs.ts';
 import { navigate, useLocation } from '../router.tsx';
 import { useSession } from '../session.tsx';
@@ -73,6 +73,17 @@ export function Studio() {
     };
   }, [paymentState, sessionId, setUser, notify]);
 
+  // If the owner stops offering the chosen model, move to one that is offered.
+  const chosenModel = draft?.settings.model;
+  const disabledModels = config.pricing.disabledModels;
+  useEffect(() => {
+    if (!chosenModel || !disabledModels.includes(chosenModel)) return;
+    const next = MODELS.find((m) => !disabledModels.includes(m.id));
+    if (!next) return;
+    actions.setSettings({ model: next.id });
+    notify(`${modelById(chosenModel)?.name ?? 'That model'} isn't offered right now, so the studio switched to ${next.name}.`, 'info');
+  }, [chosenModel, disabledModels, actions, notify]);
+
   // Refunds happen on the server; refresh the balance when one shows up.
   const refunded = jobs.jobs.filter((job) => job.refunded).length;
   const lastRefunded = useRef(refunded);
@@ -84,20 +95,32 @@ export function Studio() {
   const stats = useMemo(() => {
     if (!draft) return undefined;
     let words = 0;
-    const modes = { text: 0, frames: 0, references: 0 };
+    let total = 0;
+    let seconds = 0;
+    const modes = new Map<InputType, number>();
+    const prices = new Map<string, number>();
     const problems: { id: string; index: number; messages: string[] }[] = [];
     draft.prompts.forEach((prompt, index) => {
       const count = countWords(prompt.text);
       words += count;
-      modes[prompt.mode]++;
-      const messages = promptProblems(prompt, count);
+      modes.set(prompt.mode, (modes.get(prompt.mode) ?? 0) + 1);
+      const messages = promptProblems(prompt, draft.settings, count);
       if (messages.length > 0) problems.push({ id: prompt.id, index, messages });
+      const q = quote(config.pricing, draft.settings, countsOf(prompt, endpointFor(draft.settings, prompt.mode)), prompt.text);
+      if (q.cents !== undefined) {
+        prices.set(prompt.id, q.cents);
+        total += q.cents;
+        seconds += q.seconds;
+      }
     });
-    return { words, modes, problems, count: draft.prompts.length };
-  }, [draft]);
+    return { words, modes, problems, prices, total, seconds, count: draft.prompts.length };
+  }, [draft, config.pricing]);
 
-  const price = draft ? videoPriceCents(draft.settings, config.pricing) : 0;
-  const total = stats ? price * stats.count : 0;
+  const model = draft ? modelById(draft.settings.model) : undefined;
+  const quality = model && draft ? qualityOf(model, draft.settings.quality) : undefined;
+  const rate = draft ? perSecondCents(config.pricing, draft.settings.model, draft.settings.quality) : undefined;
+  const total = stats?.total ?? 0;
+  const samePrice = stats && new Set(stats.prices.values()).size === 1 && stats.prices.size === stats.count;
   const affordable = total <= balance;
   const tooMany = (stats?.count ?? 0) > config.limits.maxPromptsPerRequest;
 
@@ -133,18 +156,18 @@ export function Studio() {
         <div className="summary">
           <dl className="summary-grid">
             <div>
+              <dt>Model</dt>
+              <dd>
+                {model?.name} · {quality?.label}
+              </dd>
+            </div>
+            <div>
               <dt>Videos</dt>
               <dd>{formatNumber(n)}</dd>
             </div>
             <div>
-              <dt>Each</dt>
-              <dd>
-                {settings.duration}s · {settings.resolution}
-              </dd>
-            </div>
-            <div>
-              <dt>Price each</dt>
-              <dd>{money(price)}</dd>
+              <dt>{samePrice ? 'Price each' : 'Billed seconds'}</dt>
+              <dd>{samePrice ? money(total / n) : `${formatNumber(stats.seconds)} s`}</dd>
             </div>
             <div>
               <dt>Total</dt>
@@ -157,21 +180,14 @@ export function Studio() {
             <div>
               <dt>Aspect · audio</dt>
               <dd>
-                {stats.modes.frames === n ? 'From image' : settings.aspectRatio} · {settings.generateAudio ? 'on' : 'off'}
+                {settings.aspectRatio === 'auto' ? 'Auto' : settings.aspectRatio} · {settings.generateAudio ? 'on' : 'off'}
               </dd>
             </div>
           </dl>
           <p className="summary-modes">
-            {formatElapsed(n * settings.duration * 1000)} of video ·{' '}
-            {(
-              [
-                [stats.modes.text, 'text-to-video'],
-                [stats.modes.frames, 'image-to-video'],
-                [stats.modes.references, 'reference-to-video'],
-              ] as const
-            )
-              .filter(([count]) => count > 0)
-              .map(([count, label]) => `${formatNumber(count)} ${label}`)
+            {formatNumber(stats.seconds)} billed seconds at {rate !== undefined ? money(rate) : '—'} a second ·{' '}
+            {[...stats.modes]
+              .map(([mode, count]) => `${formatNumber(count)} × ${model ? inputLabel(model, mode).toLowerCase() : mode}`)
               .join(' · ')}
           </p>
           <p className="note">
@@ -185,7 +201,7 @@ export function Studio() {
     if (!ok) return;
     setSubmitting(true);
     try {
-      const created = await api.createJobs({ ...buildRequest(draft), expectedPriceCents: price });
+      const created = await api.createJobs({ ...buildRequest(draft), expectedTotalCents: total });
       setUser(created.user);
       notify(`Started ${plural(created.jobs.length, 'video')} · ${money(total)} deducted`, 'success');
       setShowProblems(false);
@@ -201,7 +217,7 @@ export function Studio() {
     } finally {
       setSubmitting(false);
     }
-  }, [draft, stats, submitting, enabled, tooMany, affordable, total, balance, price, money, config.limits, confirm, notify, setUser, refreshJobs, refreshConfig, refreshUser]);
+  }, [draft, stats, submitting, enabled, tooMany, affordable, total, balance, model, quality, rate, samePrice, money, config.limits, confirm, notify, setUser, refreshJobs, refreshConfig, refreshUser]);
 
   // Stable handler for the memoized prompt cards; always runs the latest generate().
   const generateRef = useRef(generate);
@@ -232,11 +248,15 @@ export function Studio() {
       retry: async (id) => {
         const job = jobList.find((j) => j.id === id);
         if (!job) return;
-        const cost = videoPriceCents(job.settings, config.pricing);
+        const cost = quote(config.pricing, job.settings, mediaCounts(job.media), job.promptPreview).cents;
+        if (cost === undefined) {
+          notify('This model or setting isn’t available any more. Use Reuse to load it and pick another.', 'error');
+          return;
+        }
         const ok = await confirm({
           title: `Try again for ${money(cost)}?`,
           confirmLabel: `Pay ${money(cost)} and retry`,
-          body: <p>This makes a new video with the same prompt, images and settings, and deducts {money(cost)} from your balance.</p>,
+          body: <p>This makes a new video with the same prompt, media and settings, and deducts {money(cost)} from your balance.</p>,
         });
         if (!ok) return;
         await attempt(async () => {
@@ -314,8 +334,9 @@ export function Studio() {
               <SettingsPanel
                 settings={draft.settings}
                 onChange={actions.setSettings}
-                framesCount={stats.modes.frames}
-                hint={`${MODEL_LABEL} · ${money(price)} per video at these settings`}
+                pricing={config.pricing}
+                money={money}
+                hint={rate !== undefined ? `${money(rate)} per second of video` : 'Not available right now'}
               />
 
               <div className="prompts-toolbar">
@@ -352,6 +373,8 @@ export function Studio() {
                     key={prompt.id}
                     prompt={prompt}
                     index={index}
+                    settings={draft.settings}
+                    price={stats.prices.has(prompt.id) ? money(stats.prices.get(prompt.id)!) : undefined}
                     showProblems={showProblems}
                     uploadsEnabled={enabled}
                     actions={actions}
@@ -369,10 +392,10 @@ export function Studio() {
               <footer className="composer-footer">
                 <div className="footer-summary">
                   <strong>
-                    {plural(stats.count, 'video')} × {money(price)} = {money(total)}
+                    {samePrice ? `${plural(stats.count, 'video')} × ${money(total / stats.count)} = ${money(total)}` : `${plural(stats.count, 'video')} = ${money(total)}`}
                   </strong>
                   <span className="muted">
-                    {draft.settings.duration}s · {draft.settings.resolution} · balance {money(balance)}
+                    {model?.name} · {quality?.label} · {formatNumber(stats.seconds)} s billed · balance {money(balance)}
                     {saveFailed ? ' · draft too large to autosave' : ''}
                   </span>
                   {showProblems && stats.problems.length > 0 && (

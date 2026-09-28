@@ -1,24 +1,25 @@
-/** A customer's image uploads and videos. Every route acts on the logged-in customer's own data. */
+/** A customer's uploads and videos. Every route acts on the logged-in customer's own data. */
+import { randomUUID } from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import axios from 'axios';
 import express, { type Router } from 'express';
 import { LIMITS } from '../../shared/options.ts';
+import type { UploadResult } from '../../shared/types.ts';
 import { rateLimiter } from '../auth.ts';
+import { nowIso } from '../db.ts';
 import { isAcceptableUrl, toHiggsfieldError, type HiggsfieldApi } from '../higgsfield.ts';
 import type { JobRow } from '../jobs.ts';
+import { isUnsupportedVideo, mp4Duration, readHead, saveBody, sniffMedia } from '../media.ts';
 import { HttpProblem, parseCreateJobs } from '../requests.ts';
 import { smallJson, userById, type Deps } from './context.ts';
 
-/** Identify the real image type from its first bytes rather than trusting the declared type. */
-export function sniffImageType(bytes: Buffer): string | undefined {
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
-  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
-  if (bytes.length >= 6 && ['GIF87a', 'GIF89a'].includes(bytes.toString('latin1', 0, 6))) return 'image/gif';
-  if (bytes.length >= 12 && bytes.toString('latin1', 0, 4) === 'RIFF' && bytes.toString('latin1', 8, 12) === 'WEBP') return 'image/webp';
-  return undefined;
-}
+const SIZE_LIMIT = { image: LIMITS.imageBytes, video: LIMITS.videoBytes, audio: LIMITS.audioBytes } as const;
+const megabytes = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 
-function expectedPrice(body: unknown): number | undefined {
-  const value = (body as { expectedPriceCents?: unknown } | undefined)?.expectedPriceCents;
+function whole(body: unknown, key: string): number | undefined {
+  const value = (body as Record<string, unknown> | undefined)?.[key];
   return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
 }
 
@@ -31,15 +32,38 @@ export function jobRoutes(router: Router, { db, config, auth, store, runner, api
   };
   const balance = (userId: string) => auth.publicUser(userById(db, userId)!);
 
-  router.post('/uploads', express.raw({ type: () => true, limit: LIMITS.uploadBytes }), async (req, res) => {
+  // Streams to a temporary file (videos can be large), checks what the file really is, measures videos
+  // so their seconds can be priced, then hands it to Higgsfield storage and remembers it for this customer.
+  router.post('/uploads', async (req, res) => {
     const user = auth.requireUser(req);
     uploadLimit(`user:${user.id}`, 'Too many uploads. Please wait a while and try again.');
     const higgsfield = requireApi();
-    const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-    if (bytes.length === 0) throw new HttpProblem(400, 'Empty upload');
-    const type = sniffImageType(bytes);
-    if (!type) throw new HttpProblem(415, 'Only JPEG, PNG, WebP and GIF images are supported');
-    res.json({ url: await higgsfield.upload(bytes, type) });
+    if (Number(req.headers['content-length']) > LIMITS.videoBytes) throw new HttpProblem(413, `Files can be up to ${megabytes(LIMITS.videoBytes)}`);
+    const file = path.join(os.tmpdir(), `upload-${randomUUID()}`);
+    try {
+      const size = await saveBody(req, file, LIMITS.videoBytes);
+      if (size === 0) throw new HttpProblem(400, 'Empty upload');
+      const head = await readHead(file);
+      const type = sniffMedia(head);
+      if (!type) {
+        throw new HttpProblem(415, isUnsupportedVideo(head) ? 'Upload videos as MP4 or MOV.' : 'Use a JPEG, PNG, WebP or GIF image, an MP4 or MOV video, or an MP3, WAV, M4A or AAC audio file.');
+      }
+      if (size > SIZE_LIMIT[type.kind]) throw new HttpProblem(413, `${type.kind === 'image' ? 'Images' : type.kind === 'video' ? 'Videos' : 'Audio files'} can be up to ${megabytes(SIZE_LIMIT[type.kind])}`);
+      let seconds: number | undefined;
+      if (type.kind === 'video' || type.contentType === 'audio/mp4') seconds = await mp4Duration(file);
+      if (type.kind === 'video') {
+        if (seconds === undefined) throw new HttpProblem(415, 'Couldn’t read this video’s length. Upload an MP4 or MOV file.');
+        if (seconds > LIMITS.videoSeconds) throw new HttpProblem(400, `Videos can be up to ${LIMITS.videoSeconds} seconds; trim it first.`);
+      }
+      const url = await higgsfield.upload(file, type.contentType, size);
+      db.prepare('INSERT OR REPLACE INTO uploads (url, user_id, kind, content_type, bytes, seconds, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+        url, user.id, type.kind, type.contentType, size, seconds ?? null, nowIso(),
+      );
+      const result: UploadResult = { url, kind: type.kind, contentType: type.contentType, ...(seconds !== undefined ? { seconds } : {}) };
+      res.json(result);
+    } finally {
+      await fs.rm(file, { force: true });
+    }
   });
 
   router.get('/jobs', (req, res) => {
@@ -61,7 +85,7 @@ export function jobRoutes(router: Router, { db, config, auth, store, runner, api
     if (request.prompts.length > config.maxPromptsPerRequest) {
       throw new HttpProblem(400, `At most ${config.maxPromptsPerRequest} videos per request`);
     }
-    const jobs = runner.enqueue(user.id, request, expectedPrice(req.body));
+    const jobs = runner.enqueue(user.id, request, { totalCents: whole(req.body, 'expectedTotalCents'), perVideoCents: whole(req.body, 'expectedPriceCents') });
     res.status(201).json({ jobs: jobs.map(({ prompt: _prompt, ...summary }) => summary), user: balance(user.id) });
   });
 
@@ -105,7 +129,7 @@ export function jobRoutes(router: Router, { db, config, auth, store, runner, api
   router.post('/jobs/:id/retry', smallJson, (req, res) => {
     const user = auth.requireUser(req);
     createLimit(`user:${user.id}`, 'Too many requests. Please wait a while and try again.');
-    const job = runner.retry(req.params.id, user.id, expectedPrice(req.body));
+    const job = runner.retry(req.params.id, user.id, whole(req.body, 'expectedPriceCents'));
     res.status(201).json({ id: job.id, user: balance(user.id) });
   });
 

@@ -101,15 +101,16 @@ build/
 
 ---
 
-## Adron Video Engine: a paid AI video platform (Seedance 2.5 via Higgsfield)
+## Adron Video Engine: a paid AI video platform (21 models via Higgsfield)
 
-A website you can sell: customers sign up, buy credit, and turn long prompts and images into Seedance 2.5 videos made through the Higgsfield API. The default price is **$12.00 per 30-second 720p video** ($0.40 per second at 720p, $0.30 at 480p), and you can change it any time in the admin dashboard. Your Higgsfield and payment keys stay on the server; browsers never see them.
+A website you can sell: customers sign up, buy credit, and turn long prompts, images and videos into AI videos with **21 models** through the Higgsfield API — Seedance 2.5 and 2.0, Kling 3.0, 2.6, 2.5 Turbo, O1 (Omni) and O3, Wan 3.0 Prime, 3.0, 2.7 and 2.6, Genjutsu, Cinema Studio 4.0, MiniMax Hailuo 2.3 and H3, Happy Horse 1.0 and 1.1, LTX 2.5 Fast and Pro, PixVerse 6 and Grok Imagine Video 1.5. Every price is per second of video, set per model and quality in the admin dashboard; the default for **Seedance 2.5 is $12.00 per 30-second 720p video** ($0.40 per second). Your Higgsfield and payment keys stay on the server; browsers never see them.
 
 **For customers**
 
 - Home page with features, pricing and FAQ; sign up, log in, password reset by email.
 - Credit wallet: buy packs by card (Stripe) or UPI/cards/net banking (Razorpay). Credit never expires.
-- Studio: prompts of up to **50,000 words**, `.txt` import and a scene splitter for long scripts, start/end frames or up to 9 reference images, 4–30 s, 480p/720p, six aspect ratios, sound on/off.
+- Studio: a model picker, then each model's own options — quality (480p to 4K, or Standard/Pro/4K/Turbo tiers), duration, aspect ratio, sound. Prompts of up to **50,000 words**, `.txt` import and a scene splitter for long scripts.
+- Every input the models take: text only, start/end frames, reference images, videos and audio, edit or extend a video, motion control/transfer, object swap, video reference, and an audio track (Wan 2.6/2.7, Grok). MP4/MOV videos up to 200 MB and 60 s, with upload progress.
 - The exact price is shown before anything is charged. Videos that fail, are blocked by the content filter, or are canceled before starting are **refunded automatically**.
 - My videos (live progress, play, download), and an account page with every charge, refund and payment.
 - Terms, Privacy, Refund & Cancellation and Contact pages (templates: have them reviewed for your business).
@@ -118,10 +119,12 @@ A website you can sell: customers sign up, buy credit, and turn long prompts and
 
 - Revenue, customers, videos made, unspent customer credit.
 - Customers: search, add or remove credit (for example after a bank transfer), disable accounts.
-- Every video with the technical failure reason, and one-click refunds. Payments list. Prices, credit packs and sign-up bonus.
+- Every video with its model and the technical failure reason, and one-click refunds. Payments list. A price per second for every model and quality, a switch to hide any model, credit packs and sign-up bonus.
 - If Higgsfield rejects the platform's key or your Higgsfield credit runs out, new videos wait in the queue (nobody is charged twice) and the dashboard says why.
 
-**How the money works:** customers pay you through Stripe or Razorpay and get credit. Each video takes its price from their credit when it starts, and your Higgsfield account pays Higgsfield for the generation. Your margin is your price minus Higgsfield's cost, payment fees and taxes, so check Higgsfield's current price for a 30-second 720p Seedance 2.5 video before you pick yours. Also confirm that Higgsfield's API terms allow reselling generations, and that your payment account (Stripe/Razorpay KYC) is approved for this kind of digital service.
+**How the money works:** customers pay you through Stripe or Razorpay and get credit. Each video takes its price from their credit when it starts, and your Higgsfield account pays Higgsfield for the generation. A video costs its billed seconds × the model's price per second; when a customer uploads a video (edit, extend, motion, video references), its length counts too, mirroring how Higgsfield bills video input. The server measures uploaded videos itself, so the length can't be faked.
+
+Your margin is your price minus Higgsfield's cost, payment fees and taxes. The starting prices are rough estimates of about twice Higgsfield's list price where it is published; **check your real cost for each model in the Higgsfield console before selling.** One to watch: Higgsfield's docs bill Seedance 2.5 by video tokens, which at 720p (1280×720, 24 fps, $0.0214 per 1,000 tokens) is about **$0.46 per second at list price** — a 30-second 720p video costs you about $13.87, or about $9.71 with the 30% discount currently shown on their pricing page, against the $12.00 default price. Genjutsu is also expensive ($0.681 per input second at 720p, list). Also confirm that Higgsfield's API terms allow reselling generations, and that your payment account (Stripe/Razorpay KYC) is approved for this kind of digital service.
 
 ### Deploy on adronstore.in
 
@@ -155,10 +158,6 @@ Without payment keys the site runs in manual-payment mode, which is handy for tr
 
 **Configuration:** every setting is listed with an explanation in [`.env.example`](.env.example). `npm run typecheck` type-checks everything; `npm run example` runs the original one-off CLI generation (`index.ts`, also billable).
 
-**How prompts map to Seedance 2.5** (`server/requests.ts`)
+**Models and endpoints** (`shared/models.ts`)
 
-- Prompt only: `bytedance/seedance-2.5/text-to-video` with `prompt`, `duration`, `resolution`, `aspect_ratio`, `generate_audio`
-- Start/end frame: `bytedance/seedance-2.5/image-to-video` with `image_url` and `end_image_url` (framing comes from the image)
-- Reference images: `bytedance/seedance-2.5/reference-to-video` with `image_urls`
-
-These workflow and field names have not been checked against Higgsfield's official model reference, which was unreachable when this was built. If Higgsfield rejects a field, the video fails with the API's reason (shown to the admin) and the customer is refunded; options and limits live in `shared/options.ts`.
+Every model, quality and input type maps to one of Higgsfield's 66 video endpoints, e.g. `bytedance/seedance-2.5/text-to-video`, `kling-video/v3.0/pro/image-to-video`, `kling-video/v3/motion-control/std`, `alibaba/wan-3.0-prime/reference-to-video`, `higgsfield/genjutsu/object-swap/v1.0`, `xai/grok-imagine-video/v1.5/reference-to-video`. Field names, allowed durations, resolutions, aspect ratios and media limits follow Higgsfield's published input schemas (docs.higgsfield.ai, as of 26 Sep 2026); the studio and the server share the same table, so the page never offers something the server refuses. Each request was checked against those schemas with a local mock; none was sent to the live Higgsfield API while building this. If Higgsfield changes a model, the video fails with the API's reason (shown to the admin) and the customer is refunded automatically — update `shared/models.ts` to match.

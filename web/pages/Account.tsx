@@ -1,6 +1,6 @@
 /** The customer's balance, activity, payments and password. */
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { videoPriceCents } from '../../shared/pricing.ts';
+import { headlinePriceCents } from '../../shared/pricing.ts';
 import type { LedgerEntry, LedgerKind, PaymentRecord } from '../../shared/types.ts';
 import { api } from '../api.ts';
 import { BuyCreditsDialog } from '../components/BuyCredits.tsx';
@@ -75,7 +75,7 @@ export function Account() {
     }
   };
 
-  const perVideo = config ? videoPriceCents({ duration: 30, resolution: '720p' }, config.pricing) : 0;
+  const perVideo = config ? headlinePriceCents(config.pricing) : 0;
   const videosLeft = perVideo > 0 ? Math.floor(user.balanceCents / perVideo) : 0;
 
   return (
@@ -103,8 +103,8 @@ export function Account() {
             <strong className="balance-amount">{money(user.balanceCents)}</strong>
             <span className="muted">
               {videosLeft > 0
-                ? `Enough for ${videosLeft} × 30-second 720p video${videosLeft === 1 ? '' : 's'}`
-                : `A 30-second 720p video costs ${money(perVideo)}`}
+                ? `Enough for ${videosLeft} × 30-second 720p Seedance 2.5 video${videosLeft === 1 ? '' : 's'}`
+                : `A 30-second 720p Seedance 2.5 video costs ${money(perVideo)}`}
             </span>
           </div>
           <button type="button" className="button button-primary button-large" onClick={() => setBuying(true)}>

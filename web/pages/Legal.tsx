@@ -5,6 +5,7 @@
 import type { ReactNode } from 'react';
 import { PublicHeader, SiteFooter } from '../components/Chrome.tsx';
 import { Icon } from '../components/Icon.tsx';
+import { headlinePriceCents } from '../../shared/pricing.ts';
 import { Link } from '../router.tsx';
 import { useSession } from '../session.tsx';
 
@@ -54,7 +55,7 @@ export function Legal({ page }: { page: LegalPage }) {
   const who = config.business.name ?? app;
   const email = config.supportEmail;
   const mail = email ? <a href={`mailto:${email}`}>{email}</a> : 'our support address';
-  const perVideo = money(config.pricing.perSecondCents['720p'] * 30);
+  const perVideo = money(headlinePriceCents(config.pricing));
   const processor =
     config.payments.provider === 'stripe' ? 'Stripe' : config.payments.provider === 'razorpay' ? 'Razorpay' : 'our payment processor';
 
@@ -69,7 +70,7 @@ export function Legal({ page }: { page: LegalPage }) {
           </p>
           <h2>1. The service</h2>
           <p>
-            {app} creates videos with artificial intelligence from text prompts and images you provide. Videos are produced by
+            {app} creates videos with artificial intelligence from text prompts, images, videos and audio you provide. Videos are produced by
             third-party AI models; results vary and may not match your prompt exactly.
           </p>
           <h2>2. Your account</h2>
@@ -80,7 +81,7 @@ export function Legal({ page }: { page: LegalPage }) {
           <h2>3. Credit and prices</h2>
           <p>
             {app} is prepaid: you buy credit and each video's price is deducted when it starts. Prices are in {config.pricing.currency}{' '}
-            and are shown before you confirm (for example, {perVideo} for a 30-second 720p video). Credit does not expire, has no cash
+            and are shown before you confirm (for example, {perVideo} for a 30-second 720p Seedance 2.5 video); they depend on the model, quality and length, and on the length of any video you upload. Credit does not expire, has no cash
             value, and can't be transferred. We may change prices for future videos; a change never affects a video already started.
             Payments are processed by {processor}; we never see or store your full card or bank details.
           </p>
@@ -105,7 +106,7 @@ export function Legal({ page }: { page: LegalPage }) {
           </p>
           <h2>6. Your content and videos</h2>
           <p>
-            You keep whatever rights you have in your prompts and images, and you confirm you have the right to use them. You let us
+            You keep whatever rights you have in your prompts and uploads, and you confirm you have the right to use them. You let us
             and our providers process them only to run the service. Subject to these terms, the law, and the usage rules of the AI models
             we use, you may use the videos you create. AI output can resemble other content, so check that your use doesn't infringe
             anyone's rights.
@@ -145,7 +146,7 @@ export function Legal({ page }: { page: LegalPage }) {
               <strong>Account details:</strong> your name, email address, and your password in scrambled (hashed) form.
             </li>
             <li>
-              <strong>Your content:</strong> the prompts and images you submit and the videos created from them.
+              <strong>Your content:</strong> the prompts, images, videos and audio you submit and the videos created from them.
             </li>
             <li>
               <strong>Payments:</strong> amounts, dates, status and the payment processor's reference. Card, UPI and bank details go
@@ -163,7 +164,7 @@ export function Legal({ page }: { page: LegalPage }) {
           </p>
           <h2>Who we share it with</h2>
           <p>
-            Only the providers needed to run {app}: our AI video-generation provider (which receives your prompts and images to make
+            Only the providers needed to run {app}: our AI video-generation provider (which receives your prompts and uploads to make
             the videos and stores the finished files), {processor} for payments, our email provider, and our hosting provider. We may
             disclose information when the law requires it.
           </p>

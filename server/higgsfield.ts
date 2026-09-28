@@ -5,6 +5,7 @@
  * into a HiggsfieldError whose message is safe to show (raw axios errors carry the
  * Authorization header, so they are never passed on).
  */
+import { createReadStream } from 'node:fs';
 import axios from 'axios';
 import {
   APIError,
@@ -38,7 +39,8 @@ export interface HiggsfieldApi {
   status(requestId: string): Promise<RemoteStatus>;
   /** `too-late` once generation has started: Higgsfield cancels only queued requests. */
   cancel(requestId: string): Promise<'canceled' | 'too-late'>;
-  upload(bytes: Buffer, contentType: string): Promise<string>;
+  /** Put a file in Higgsfield storage and return the public URL models can read. */
+  upload(file: string, contentType: string, size: number): Promise<string>;
 }
 
 export function createHiggsfieldApi(options: { credentials: string; baseUrl: string }): HiggsfieldApi {
@@ -90,17 +92,17 @@ export function createHiggsfieldApi(options: { credentials: string; baseUrl: str
       }
     },
 
-    async upload(bytes, contentType) {
+    async upload(file, contentType, size) {
       try {
         const { data } = await http.post('/files/generate-upload-url', { content_type: contentType });
         const uploadUrl = serviceUrl(data?.upload_url, 'upload URL');
         const publicUrl = serviceUrl(data?.public_url, 'public file URL');
-        const headers: Record<string, string> = { 'Content-Type': contentType };
+        const headers: Record<string, string> = { 'Content-Type': contentType, 'Content-Length': String(size) };
         for (const [name, value] of Object.entries(data?.upload_headers ?? {})) {
           if (typeof value === 'string') headers[name] = value;
         }
-        // Presigned storage URL: send the file only, never the API credentials.
-        await axios.put(uploadUrl, bytes, { headers, timeout: 120_000, maxBodyLength: Infinity });
+        // Presigned storage URL: send the file only, never the API credentials. Streamed, so large videos stay off the heap.
+        await axios.put(uploadUrl, createReadStream(file), { headers, timeout: 15 * 60_000, maxBodyLength: Infinity, maxContentLength: Infinity });
         return publicUrl;
       } catch (error) {
         throw toHiggsfieldError(error);

@@ -1,17 +1,40 @@
-import type { AspectRatio, MediaMode, Resolution } from './options.ts';
+import type { InputType, MediaKind } from './models.ts';
 
+/** One batch's output choices; which options apply depends on the model (see models.ts). */
 export interface GenerationSettings {
+  /** A model id from models.ts, e.g. "seedance-2.5". */
+  model: string;
+  /** A quality id of that model, e.g. "720p" or "pro". */
+  quality: string;
   duration: number;
-  resolution: Resolution;
-  aspectRatio: AspectRatio;
+  /** A ratio like "16:9", or "auto". */
+  aspectRatio: string;
   generateAudio: boolean;
 }
 
 export interface MediaInput {
-  mode: MediaMode;
+  mode: InputType;
   startImageUrl?: string;
   endImageUrl?: string;
   referenceImageUrls?: string[];
+  referenceVideoUrls?: string[];
+  referenceAudioUrls?: string[];
+  /** The video to edit, extend or take motion from. */
+  sourceVideoUrl?: string;
+  /** An optional audio track (models that take one). */
+  soundtrackUrl?: string;
+  /** Lengths the server measured when the videos were uploaded (it ignores values sent by the page). */
+  sourceVideoSeconds?: number;
+  referenceVideoSeconds?: number[];
+}
+
+/** What the upload endpoint returns. */
+export interface UploadResult {
+  url: string;
+  kind: MediaKind;
+  contentType: string;
+  /** Video (and some audio) length in seconds, when it could be read. */
+  seconds?: number;
 }
 
 export interface PromptInput {
@@ -76,7 +99,10 @@ export type PaymentProviderName = 'stripe' | 'razorpay' | 'manual';
 /** Prices in the platform currency's minor unit (cents/paise). */
 export interface Pricing {
   currency: string;
-  perSecondCents: Record<Resolution, number>;
+  /** Price per billed second, by model id, then quality id. */
+  perSecond: Record<string, Record<string, number>>;
+  /** Models not offered to customers. */
+  disabledModels: string[];
   packsCents: number[];
   signupBonusCents: number;
 }
